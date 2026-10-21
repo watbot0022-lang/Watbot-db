@@ -1,5 +1,5 @@
 {
-  "name": "watbot-students-report",
+  "name": "watbot-report-db",
   "keep_vars": true,
   "compatibility_date": "2024-09-23",
   "main": "src/index.js",
