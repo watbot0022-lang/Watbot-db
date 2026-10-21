@@ -94,7 +94,8 @@ export async function handleAuth(request, env, parts, method) {
   if (action === "status" && method === "GET") {
     const st = await env.DB.prepare(`SELECT s.school_name FROM gr_settings s JOIN academic_years y ON y.id = s.academic_year_id
       WHERE s.school_name IS NOT NULL AND s.school_name <> '' ORDER BY (y.status = 'active') DESC, y.year_be DESC LIMIT 1`).first().catch(() => null);
-    return json({ needs_setup: !(await hasUsers(env)), allow_register: true, school: st?.school_name || null });
+    const needs = !(await hasUsers(env));
+    return json({ needs_setup: needs, allow_register: true, school: st?.school_name || null, setup_email: needs ? normEmail(env.SETUP_ADMIN_EMAIL) || null : null });
   }
 
   // ติดตั้งครั้งแรก: ยังไม่มีผู้ใช้เลย → สร้างผู้ดูแลระบบคนแรก + ปีการศึกษาแรก
@@ -103,6 +104,9 @@ export async function handleAuth(request, env, parts, method) {
     const b = await readJson(request);
     const email = normEmail(b.email), name = text(b.full_name, 120);
     if (!validEmail(email)) fail(400, "อีเมลหรือชื่อผู้ใช้ไม่ถูกต้อง (ภาษาอังกฤษ ตัวเลข . _ - อย่างน้อย 3 ตัว หรืออีเมล)");
+    // กำหนดผู้ดูแลระบบคนแรกไว้ล่วงหน้า (vars.SETUP_ADMIN_EMAIL ใน wrangler.jsonc) — คนอื่นเปิดฟอร์มติดตั้งก่อนก็ยึดระบบไม่ได้
+    const fixed = normEmail(env.SETUP_ADMIN_EMAIL);
+    if (fixed && email !== fixed) fail(403, `บัญชีผู้ดูแลระบบคนแรกต้องใช้อีเมล ${fixed}`);
     if (!name) fail(400, "กรุณากรอกชื่อ-สกุล");
     checkPasswordStrength(b.password);
     const pw = await passwordFields(b.password);

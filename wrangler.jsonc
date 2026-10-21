@@ -16,5 +16,6 @@
       "database_id": "9797d04b-8d50-412e-8659-7a75d9625892"
     }
   ],
+  "vars": { "SETUP_ADMIN_EMAIL": "sattawat.imc@gmail.com" },
   "observability": { "enabled": true }
 }

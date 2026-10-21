@@ -159,3 +159,13 @@ test("ตราโรงเรียน: ผู้ดูแลอัปโหล
   assert.equal(res.headers.get("Content-Type"), "image/png");
   assert.equal((await res.arrayBuffer()).byteLength, 70);
 });
+
+test("ผู้ดูแลระบบคนแรกกำหนดอีเมลไว้ล่วงหน้า: อีเมลอื่นติดตั้งไม่ได้", async () => {
+  const { env, call } = await client();
+  env.SETUP_ADMIN_EMAIL = "Sattawat.IMC@gmail.com";
+  assert.equal((await call(null, "GET", "/api/auth/status", null, 200)).data.setup_email, "sattawat.imc@gmail.com");
+  await call("x", "POST", "/api/auth/setup", { email: "admin", full_name: "คนอื่น ยึดระบบ", password: "Admin12345" }, 403);
+  await call("a", "POST", "/api/auth/setup", { email: "sattawat.imc@gmail.com", full_name: "ผู้ดูแล ระบบ", password: "Admin12345" }, 200);
+  assert.equal((await call("a", "GET", "/api/me", null, 200)).data.user.role, "superadmin");
+  assert.equal((await call(null, "GET", "/api/auth/status", null, 200)).data.setup_email, null);
+});

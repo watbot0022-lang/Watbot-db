@@ -73,6 +73,7 @@ forms.setup.year_be.value = d.getFullYear() + 543 - (d.getMonth() < 4 ? 1 : 0);
 try {
   const st = await api("/api/auth/status");
   if (st.school) document.getElementById("school").textContent = st.school;
+  if (st.setup_email) { forms.setup.email.value = st.setup_email; forms.setup.email.readOnly = true; }
   show(st.needs_setup ? "setup" : location.hash === "#register" ? "register" : "login");
 } catch (ex) {
   document.getElementById("loading").textContent = `เชื่อมต่อระบบไม่ได้: ${ex.message}`;
