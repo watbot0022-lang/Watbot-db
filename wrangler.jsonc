@@ -1,6 +1,6 @@
 {
   // ระบบรายงานผลการเรียน โรงเรียนวัดโบสถ์ (ราษฎร์รังสฤษฏ์) — Cloudflare Worker + D1
-  // ก่อนเผยแพร่: สร้างฐานข้อมูล D1 ชื่อ watbot_report_db แล้วนำ Database ID มาใส่ที่ database_id ด้านล่าง
+  // ฐานข้อมูล D1 ชื่อ watbot_report_db (สร้างแล้ว — database_id ด้านล่าง)
   // และตั้ง Secret ชื่อ JWT_SECRET (ข้อความสุ่มยาว ๆ) ที่ Settings → Variables and Secrets ของ Worker
   "name": "watbot-students-report",
   "keep_vars": true,
@@ -16,7 +16,7 @@
     {
       "binding": "DB",
       "database_name": "watbot_report_db",
-      "database_id": "ใส่-Database-ID-ของ-D1-ที่นี่"
+      "database_id": "e66ba1d3-25b7-4f22-9daf-ee3357c0beea"
     }
   ],
   "observability": { "enabled": true }
