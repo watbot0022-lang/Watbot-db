@@ -1,7 +1,4 @@
 {
-  // ระบบรายงานผลการเรียน โรงเรียนวัดโบสถ์ (ราษฎร์รังสฤษฏ์) — Cloudflare Worker + D1
-  // ฐานข้อมูล D1 watbot_report_db ในบัญชี Cloudflare ของโรงเรียนวัดโบสถ์
-  // และตั้ง Secret ชื่อ JWT_SECRET (ข้อความสุ่มยาว ๆ) ที่ Settings → Variables and Secrets ของ Worker
   "name": "watbot-students-report",
   "keep_vars": true,
   "compatibility_date": "2024-09-23",
