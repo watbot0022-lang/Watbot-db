@@ -1,0 +1,781 @@
+import { json, readJson, fail, requireAdmin, requireViewer, intParam, text, audit, batchAll, HttpError, requireImporter } from "../lib/http.js";
+import { securityAlert, superadminIds } from "../lib/auth-sessions.js";
+import { HOMEROOM_GRANT_DAYS, nowSql } from "../lib/edit-requests.js";
+import { structureIssues, indicatorWord } from "../../public/js/grading.js";
+import { resolveYear, getSettings, listRooms, compareRoom, isPrimaryGrade, isSchoolGrade, mirrorHomerooms, compareThaiName, compareSubject, compareGrade, compareThai, ACTIVE_USER } from "../lib/data.js";
+
+export const LEARNING_AREAS = [
+  "ภาษาไทย", "คณิตศาสตร์", "วิทยาศาสตร์และเทคโนโลยี", "สังคมศึกษา ศาสนาและวัฒนธรรม",
+  "สุขศึกษาและพลศึกษา", "ศิลปะ", "การงานอาชีพ", "ภาษาต่างประเทศ",
+];
+export const BANK_KINDS = ["ระหว่างทาง", "ปลายทาง", "ผลการเรียนรู้", "ผลลัพธ์การเรียนรู้", "ความสามารถผู้เรียน"];
+
+// โครงรายวิชาพื้นฐานตามหลักสูตรแกนกลางฯ 2551 (เวลาเรียนต่อปี) — ผู้ดูแลต้องตรวจทานให้ตรงหลักสูตรสถานศึกษา
+const BASIC_TEMPLATE = [
+  { p: "ท", n: "101", name: "ภาษาไทย", area: 0, lower: 200, upper: 160 },
+  { p: "ค", n: "101", name: "คณิตศาสตร์", area: 1, lower: 200, upper: 160 },
+  { p: "ว", n: "101", name: "วิทยาศาสตร์และเทคโนโลยี", area: 2, lower: 80, upper: 80 },
+  { p: "ส", n: "101", name: "สังคมศึกษา ศาสนาและวัฒนธรรม", area: 3, lower: 80, upper: 80 },
+  { p: "ส", n: "102", name: "ประวัติศาสตร์", area: 3, lower: 40, upper: 40 },
+  { p: "พ", n: "101", name: "สุขศึกษาและพลศึกษา", area: 4, lower: 80, upper: 80 },
+  { p: "ศ", n: "101", name: "ศิลปะ", area: 5, lower: 80, upper: 80 },
+  { p: "ง", n: "101", name: "การงานอาชีพ", area: 6, lower: 40, upper: 80 },
+  { p: "อ", n: "101", name: "ภาษาอังกฤษ", area: 7, lower: 40, upper: 80 },
+];
+
+const PRIMARY_GRADES = ["ป.1", "ป.2", "ป.3", "ป.4", "ป.5", "ป.6"];
+// สัดส่วนคะแนนเก็บ:ปลายภาคที่ตกลงกันไว้ (ต้องหาร 2 ลงตัวเป็นทศนิยมไม่เกิน 1 ตำแหน่ง เพราะคิดภาคละครึ่ง)
+export const ALLOWED_RATIOS = [50, 60, 70, 75, 80, 90, 100];
+const RATIO_TEXT = ALLOWED_RATIOS.map((r) => `${r}:${100 - r}`).join(", ");
+
+function cleanSubject(body, settings) {
+  const grade = text(body.grade_level, 10);
+  if (!PRIMARY_GRADES.includes(grade)) fail(400, "ระดับชั้นต้องเป็น ป.1–ป.6");
+  const code = text(body.code, 20).replace(/\s+/g, "");
+  if (!code) fail(400, "กรุณาระบุรหัสวิชา");
+  const name = text(body.name, 120);
+  if (!name) fail(400, "กรุณาระบุชื่อวิชา");
+  // ป.1–3 หลักสูตรใหม่มีกลุ่ม/ชื่อวิชาที่ไม่ตรงกลุ่มสาระแกนกลาง จึงรับข้อความอิสระได้
+  const area = text(body.learning_area, 80);
+  if (!area) fail(400, "กรุณาระบุกลุ่มสาระ");
+  const type = ["additional", "เพิ่มเติม"].includes(text(body.subject_type, 20)) ? "additional" : "basic";
+  const hours = Number(body.hours_per_year);
+  if (!Number.isInteger(hours) || hours < 1 || hours > 400) fail(400, "เวลาเรียนต้องเป็นจำนวนเต็ม 1–400 ชั่วโมง");
+  const ratio = body.collect_ratio == null || body.collect_ratio === "" ? settings.collect_ratio : Number(body.collect_ratio);
+  if (!ALLOWED_RATIOS.includes(ratio)) fail(400, `สัดส่วนคะแนนเก็บต้องเป็นหนึ่งใน ${RATIO_TEXT}`);
+  // ลำดับในรายงานว่าง = ต่อท้ายวิชาของชั้นนั้น (เพิ่มใหม่) หรือคงลำดับเดิม (แก้ไข/นำเข้าซ้ำ)
+  const rawSort = body.sort_order;
+  const sort = rawSort === "" || rawSort == null ? null : Number(rawSort);
+  if (sort != null && (!Number.isInteger(sort) || sort < 0 || sort > 9999)) fail(400, "ลำดับในรายงานต้องเป็นจำนวนเต็ม 0–9999");
+  return { grade, code, name, area, type, hours, ratio, sort };
+}
+
+export async function handleAdmin(request, env, user, parts, method, url) {
+  requireViewer(user);
+  const [, , section, idPart, action] = parts; // /api/admin/<section>/<id>/<action>
+  // ผู้บริหาร: ดูได้ทุกส่วน แต่เปลี่ยนข้อมูลได้เฉพาะ "อนุมัติผล" และ "ส่งคืนให้ครูแก้" (ไม่แก้คะแนน/ไม่กดตรวจแทนฝ่ายวัดผล)
+  if (!user.is_admin && method !== "GET") {
+    const execAction = section === "courses" && ((idPart === "approve" && !action) || (idPart && action === "return"));
+    if (!execAction) fail(403, "ผู้บริหารดูและตรวจสอบได้อย่างเดียว — อนุมัติหรือส่งคืนรายวิชาได้ที่หน้าอนุมัติผลการเรียน");
+  }
+  const isImport = method === "POST" && (section === "import" || (section === "subjects" && idPart === "copy") ||
+    (section === "homerooms" && idPart === "import") || (section === "indicator-bank" && idPart === "import"));
+  if (isImport || (section === "indicator-bank" && method === "DELETE")) requireImporter(user);
+
+  if (section === "settings") {
+    const year = await resolveYear(env, url.searchParams.get("year"));
+    if (method === "GET") return json({ year, settings: await getSettings(env, year.id) });
+    if (method === "PUT") {
+      const b = await readJson(request);
+      const pct = (v, label) => { const n = Number(v); if (v === "" || v == null || !Number.isInteger(n) || n < 0 || n > 100) fail(400, `${label}ต้องเป็นจำนวนเต็ม 0–100`); return n; };
+      const ratio = pct(b.collect_ratio, "สัดส่วนคะแนนเก็บ");
+      if (!ALLOWED_RATIOS.includes(ratio)) fail(400, `สัดส่วนคะแนนเก็บต้องเป็นหนึ่งใน ${RATIO_TEXT}`);
+      const s = {
+        collect_ratio: ratio,
+        indicator_pass_pct: pct(b.indicator_pass_pct, "เกณฑ์ผ่านตัวชี้วัดภาค 1 "),
+        indicator_pass_pct_t2: b.indicator_pass_pct_t2 === "" || b.indicator_pass_pct_t2 == null ? null : pct(b.indicator_pass_pct_t2, "เกณฑ์ผ่านตัวชี้วัดภาค 2 "),
+        attendance_pass_pct: pct(b.attendance_pass_pct, "เกณฑ์เวลาเรียน"),
+        school_name: text(b.school_name, 120), school_area: text(b.school_area, 160), affiliation: text(b.affiliation, 160),
+        school_address: text(b.school_address, 160),
+        director_name: text(b.director_name, 120),
+        // รองผู้อำนวยการได้หลายคน: รับเป็นอาร์เรย์หรือข้อความคั่นบรรทัด เก็บคั่นด้วยขึ้นบรรทัดใหม่
+        deputy_director_name: (Array.isArray(b.deputy_director_names) ? b.deputy_director_names : String(b.deputy_director_name ?? "").split("\n"))
+          .map((x) => text(x, 120)).filter(Boolean).slice(0, 5).join("\n"),
+        academic_head_name: text(b.academic_head_name, 120), measurement_head_name: text(b.measurement_head_name, 120),
+        entry_open: b.entry_open ? 1 : 0, roster_order: b.roster_order === "code" ? "code" : "gender",
+      };
+      // เกณฑ์ผ่าน/เกณฑ์เวลาเรียนเปลี่ยนผลของรายวิชาที่ส่งแล้วได้ — ต้องยืนยันก่อน (confirm_locked)
+      const before = await getSettings(env, year.id);
+      const changed = ["indicator_pass_pct", "indicator_pass_pct_t2", "attendance_pass_pct"].filter((k) => (before[k] ?? null) !== (s[k] ?? null));
+      if (changed.length && !b.confirm_locked) {
+        const locked = await env.DB.prepare(
+          "SELECT COUNT(*) AS n FROM gr_courses c JOIN gr_subjects x ON x.id = c.subject_id WHERE x.academic_year_id = ? AND c.locked = 1"
+        ).bind(year.id).first();
+        if (locked.n > 0) return json({ error: `มี ${locked.n} รายวิชาส่งผลแล้ว การเปลี่ยนเกณฑ์ผ่านหรือเกณฑ์เวลาเรียนจะเปลี่ยนผลของรายวิชาเหล่านั้นด้วย`, needs_confirm: true, locked: locked.n }, 409);
+      }
+      await upsertSettings(env, year.id, s, user);
+      await audit(env, user, "settings.update", { year: year.id, ...s, ...(changed.length ? { criteria_changed: changed } : {}) });
+      return json({ ok: true, settings: await getSettings(env, year.id) });
+    }
+  }
+
+  // ห้องนำร่อง: เปิดใช้ระบบเฉพาะห้องที่เลือก (ว่าง = ทุกห้อง)
+  if (section === "pilot" && method === "PUT") {
+    const b = await readJson(request);
+    const year = await resolveYear(env, b.year);
+    const valid = new Set((await listRooms(env, year.id)).filter((r) => isPrimaryGrade(r.grade_level)).map((r) => `${r.grade_level}/${r.classroom}`));
+    const rooms = [...new Set((Array.isArray(b.rooms) ? b.rooms : []).map((r) => text(r, 20)))];
+    for (const r of rooms) if (!valid.has(r)) fail(400, `ไม่พบห้อง ${r} ในปีการศึกษานี้`);
+    await upsertSettings(env, year.id, { pilot_rooms: rooms.length ? JSON.stringify(rooms) : null }, user);
+    await syncCourses(env, year.id);
+    await audit(env, user, "pilot.set", { year: year.id, rooms });
+    return json({ ok: true, pilot_rooms: rooms.length ? rooms : null });
+  }
+
+  if (section === "rooms" && method === "GET") {
+    const year = await resolveYear(env, url.searchParams.get("year"));
+    return json({ rooms: await listRooms(env, year.id) });
+  }
+
+  if (section === "teachers" && method === "GET") {
+    const { results } = await env.DB.prepare(
+      // รวมครูที่เพิ่งสมัคร (ยังไม่มีบทบาท) — ฝ่ายวัดผลมอบหมายวิชาได้เลย และได้บทบาทครูอัตโนมัติ
+      `SELECT u.id, u.full_name, u.email, u.role, u.created_at, r.role AS grade_role, CASE WHEN u.role IS NULL THEN 1 ELSE 0 END AS pending
+         FROM users u LEFT JOIN gr_staff_roles r ON r.user_id = u.id
+        WHERE u.status = 'active' AND u.deleted_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM viewer_accounts v WHERE v.user_id = u.id)`
+    ).all();
+    return json({ teachers: results.sort((a, b) => compareThaiName(a.full_name, b.full_name)) });
+  }
+
+  if (section === "staff-roles") {
+    if (method === "PUT") {
+      const b = await readJson(request);
+      const target = intParam(b.user_id, "ผู้ใช้");
+      if (b.grant) {
+        await env.DB.prepare(`INSERT INTO gr_staff_roles (user_id, role, granted_by) VALUES (?, 'grade_admin', ?)
+          ON CONFLICT(user_id) DO UPDATE SET role='grade_admin', granted_by=excluded.granted_by, granted_at=datetime('now')`).bind(target, user.id).run();
+      } else {
+        await env.DB.prepare("DELETE FROM gr_staff_roles WHERE user_id = ?").bind(target).run();
+      }
+      await audit(env, user, "staff_role", { target, grant: !!b.grant });
+      // แจ้งเตือนความปลอดภัย: เจ้าของบัญชี + ผู้ดูแลระบบคนอื่น (ส่งผ่านกระดิ่งและ LINE ของระบบบริหารโรงเรียน)
+      const who = await env.DB.prepare("SELECT full_name FROM users WHERE id = ?").bind(target).first();
+      const change = b.grant ? "ได้รับสิทธิ์ทีมวัดและประเมินผล (แก้ไขข้อมูลส่วนกลางระบบผลการเรียน)" : "ถูกถอนสิทธิ์ทีมวัดและประเมินผล";
+      await securityAlert(env, [target], "account_changed", `${user.full_name} เปลี่ยนสิทธิ์ระบบรายงานผลการเรียนของคุณ: ${change}`).catch(() => {});
+      await securityAlert(env, (await superadminIds(env, user.id)).filter((id) => id !== target), "account_changed",
+        `${user.full_name} เปลี่ยนสิทธิ์ระบบรายงานผลการเรียนของ ${who?.full_name || "ผู้ใช้"}: ${change}`).catch(() => {});
+      return json({ ok: true });
+    }
+  }
+
+
+  // ---------- นำเข้าจาก Excel (วางข้อมูล) ----------
+  // ทุกแบบ: ส่ง dry_run = true เพื่อดูผลตรวจก่อน แล้วค่อยส่งจริง ถ้ามีแถวผิดแม้แถวเดียวจะไม่บันทึกเลย
+  if (section === "import" && method === "POST") {
+    const b = await readJson(request);
+    const year = await resolveYear(env, b.year);
+    const rows = Array.isArray(b.rows) ? b.rows.slice(0, 2000) : [];
+    if (!rows.length) fail(400, "ไม่มีข้อมูลให้นำเข้า");
+    const errors = [], plan = [];
+    const check = (i, fn) => { try { const r = fn(); if (r) plan.push(r); } catch (e) { if (e instanceof HttpError) errors.push({ row: i + 1, error: e.message }); else throw e; } };
+
+    if (idPart === "subjects") {
+      const settings = await getSettings(env, year.id);
+      const seen = new Set();
+      rows.forEach((r, i) => check(i, () => {
+        const s = cleanSubject(r, settings);
+        const key = `${s.grade}|${s.code}`;
+        if (seen.has(key)) fail(400, `รหัส ${s.code} ของ ${s.grade} ซ้ำในไฟล์`);
+        seen.add(key);
+        return s;
+      }));
+      const { results: existing } = await env.DB.prepare(
+        `SELECT s.grade_level, s.code, s.collect_ratio, s.hours_per_year,
+                (SELECT COUNT(*) FROM gr_courses c WHERE c.subject_id = s.id AND c.locked = 1) AS locked
+           FROM gr_subjects s WHERE s.academic_year_id = ?`
+      ).bind(year.id).all();
+      const have = new Set(existing.map((e) => `${e.grade_level}|${e.code}`));
+      // เหมือนการแก้ทีละวิชา: วิชาที่มีห้องส่งผลแล้ว เปลี่ยนสัดส่วน/เวลาเรียนผ่านการนำเข้าไม่ได้
+      const byKey = Object.fromEntries(existing.map((e) => [`${e.grade_level}|${e.code}`, e]));
+      plan.forEach((s) => {
+        const e = byKey[`${s.grade}|${s.code}`];
+        if (e && e.locked > 0 && (e.collect_ratio !== s.ratio || e.hours_per_year !== s.hours)) {
+          errors.push({ row: rows.findIndex((r) => text(r.code, 20).replace(/\s+/g, "") === s.code && text(r.grade_level, 10) === s.grade) + 1,
+            error: `${s.code} ${s.grade}: เปลี่ยนสัดส่วนคะแนน/เวลาเรียนไม่ได้ เพราะมี ${e.locked} ห้องส่งผลแล้ว — ส่งคืนให้ครูก่อน` });
+        }
+      });
+      // ลำดับในรายงาน: วิชาเดิมที่ไม่ได้ระบุลำดับ คงลำดับเดิม · วิชาใหม่ต่อท้ายวิชาของชั้นนั้นตามลำดับแถวในไฟล์
+      const { results: sorts } = await env.DB.prepare("SELECT grade_level, code, sort_order FROM gr_subjects WHERE academic_year_id = ?").bind(year.id).all();
+      const oldSort = Object.fromEntries(sorts.map((x) => [`${x.grade_level}|${x.code}`, x.sort_order]));
+      const nextSort = {};
+      for (const x of sorts) nextSort[x.grade_level] = Math.max(nextSort[x.grade_level] || 0, x.sort_order || 0);
+      for (const p of plan) {
+        if (p.sort != null) continue;
+        const k = `${p.grade}|${p.code}`;
+        if (k in oldSort) p.sort = oldSort[k];
+        else p.sort = nextSort[p.grade] = (nextSort[p.grade] || 0) + 10;
+      }
+      const summary = { add: plan.filter((s) => !have.has(`${s.grade}|${s.code}`)).length, update: plan.filter((s) => have.has(`${s.grade}|${s.code}`)).length };
+      if (b.dry_run || errors.length) return json({ ok: !errors.length, dry_run: true, errors, summary, preview: plan });
+      await batchAll(env, plan.map((s) => env.DB.prepare(`INSERT INTO gr_subjects (academic_year_id, grade_level, code, name, learning_area, subject_type, hours_per_year, collect_ratio, sort_order)
+        VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(academic_year_id, grade_level, code) DO UPDATE SET name=excluded.name, learning_area=excluded.learning_area,
+        subject_type=excluded.subject_type, hours_per_year=excluded.hours_per_year, collect_ratio=excluded.collect_ratio, sort_order=excluded.sort_order`)
+        .bind(year.id, s.grade, s.code, s.name, s.area, s.type, s.hours, s.ratio, s.sort)));
+      await syncCourses(env, year.id);
+      await audit(env, user, "import.subjects", { year: year.id, ...summary });
+      return json({ ok: true, summary });
+    }
+
+    if (idPart === "teachers" || idPart === "homerooms") {
+      const findTeacher = await teacherMatcher(env);
+      const rooms = new Set((await listRooms(env, year.id)).filter((r) => (idPart === "homerooms" ? isSchoolGrade : isPrimaryGrade)(r.grade_level)).map((r) => `${r.grade_level}/${r.classroom}`));
+      const { results: subjects } = await env.DB.prepare("SELECT id, grade_level, code FROM gr_subjects WHERE academic_year_id = ?").bind(year.id).all();
+      const subjectOf = Object.fromEntries(subjects.map((x) => [`${x.grade_level}|${x.code}`, x.id]));
+      const seen = new Set();
+      rows.forEach((r, i) => check(i, () => {
+        const room = normRoom(r.room);
+        if (!rooms.has(room)) fail(400, `ไม่พบห้อง "${text(r.room, 20)}" (ต้องเป็นแบบ ป.4/2 และมีนักเรียนในระบบบริหารฯ)`);
+        const [grade, classroom] = room.split("/");
+        const names = String(r.teachers ?? "").split(/[,;\n]/).map((x) => text(x, 120)).filter(Boolean);
+        if (!names.length) fail(400, "ไม่ระบุครู");
+        if (names.length > (idPart === "teachers" ? 6 : 4)) fail(400, "จำนวนครูเกินที่กำหนด");
+        const teacherIds = names.map(findTeacher);
+        if (idPart === "homerooms") {
+          if (seen.has(room)) fail(400, `ห้อง ${room} ซ้ำในไฟล์`);
+          seen.add(room);
+          return { room, grade, classroom, teacherIds, names };
+        }
+        const code = text(r.code, 20).replace(/\s+/g, "");
+        const subjectId = subjectOf[`${grade}|${code}`];
+        if (!subjectId) fail(400, `ไม่พบรหัสวิชา ${code || "(ว่าง)"} ของ ${grade} — นำเข้ารายวิชาก่อน`);
+        if (seen.has(`${room}|${code}`)) fail(400, `${code} ห้อง ${room} ซ้ำในไฟล์`);
+        seen.add(`${room}|${code}`);
+        return { room, grade, classroom, code, subjectId, teacherIds, names };
+      }));
+      if (b.dry_run || errors.length) return json({ ok: !errors.length, dry_run: true, errors, summary: { rows: plan.length }, preview: plan.map(({ teacherIds, subjectId, ...p }) => p) });
+      if (idPart === "homerooms") {
+        await batchAll(env, plan.flatMap((p) => [
+          env.DB.prepare("DELETE FROM gr_homerooms WHERE academic_year_id = ? AND grade_level = ? AND classroom = ?").bind(year.id, p.grade, p.classroom),
+          ...p.teacherIds.map((t) => env.DB.prepare("INSERT INTO gr_homerooms (academic_year_id, grade_level, classroom, user_id) VALUES (?,?,?,?)").bind(year.id, p.grade, p.classroom, t)),
+        ]));
+        await mirrorHomerooms(env, year.id, plan.map((p) => ({ grade: p.grade, classroom: p.classroom, userIds: p.teacherIds })), user.id);
+      } else {
+        // สร้างรายวิชาของห้องให้ถ้ายังไม่มี แล้วแทนที่ครูผู้สอนด้วยรายชื่อในไฟล์
+        await batchAll(env, plan.map((p) => env.DB.prepare("INSERT OR IGNORE INTO gr_courses (subject_id, classroom) VALUES (?, ?)").bind(p.subjectId, p.classroom)));
+        await batchAll(env, plan.flatMap((p) => [
+          env.DB.prepare("DELETE FROM gr_course_teachers WHERE course_id = (SELECT id FROM gr_courses WHERE subject_id = ? AND classroom = ?)").bind(p.subjectId, p.classroom),
+          ...p.teacherIds.map((t) => env.DB.prepare("INSERT OR IGNORE INTO gr_course_teachers (course_id, user_id) SELECT id, ? FROM gr_courses WHERE subject_id = ? AND classroom = ?").bind(t, p.subjectId, p.classroom)),
+        ]));
+      }
+      await grantTeacherRole(env, user, plan.flatMap((p) => p.teacherIds));
+      await audit(env, user, `import.${idPart}`, { year: year.id, rows: plan.length });
+      return json({ ok: true, summary: { rows: plan.length } });
+    }
+  }
+
+  // คัดลอกรายวิชาจากปีการศึกษาก่อน (เพิ่มเฉพาะรหัสที่ยังไม่มี)
+  if (section === "subjects" && method === "POST" && idPart === "copy") {
+    const b = await readJson(request);
+    const year = await resolveYear(env, b.year);
+    const from = await resolveYear(env, intParam(b.from_year, "ปีต้นทาง"));
+    if (from.id === year.id) fail(400, "เลือกปีต้นทางที่ไม่ใช่ปีเดียวกัน");
+    const r = await env.DB.prepare(`INSERT OR IGNORE INTO gr_subjects (academic_year_id, grade_level, code, name, learning_area, subject_type, hours_per_year, collect_ratio, sort_order)
+      SELECT ?, grade_level, code, name, learning_area, subject_type, hours_per_year, collect_ratio, sort_order FROM gr_subjects WHERE academic_year_id = ?`).bind(year.id, from.id).run();
+    await syncCourses(env, year.id);
+    await audit(env, user, "subjects.copy", { year: year.id, from: from.id, added: r.meta?.changes ?? 0 });
+    return json({ ok: true, added: r.meta?.changes ?? 0 });
+  }
+
+  // ---------- รายวิชา (subjects) ----------
+  if (section === "subjects") {
+    if (method === "GET" && !idPart) {
+      const year = await resolveYear(env, url.searchParams.get("year"));
+      const { results } = await env.DB.prepare(
+        `SELECT s.*, (SELECT COUNT(*) FROM gr_courses c WHERE c.subject_id = s.id) AS course_count,
+                (SELECT COUNT(*) FROM gr_courses c WHERE c.subject_id = s.id AND c.locked = 1) AS locked_count,
+                (SELECT COUNT(DISTINCT i.course_id) FROM gr_items i JOIN gr_courses c ON c.id = i.course_id WHERE c.subject_id = s.id) AS structured_count
+           FROM gr_subjects s WHERE s.academic_year_id = ?`
+      ).bind(year.id).all();
+      results.sort((a, b) => compareGrade(a.grade_level, b.grade_level) || compareSubject(a, b));
+      return json({ year, subjects: results, learning_areas: LEARNING_AREAS });
+    }
+    if (method === "POST" && idPart === "template") {
+      const b = await readJson(request);
+      const year = await resolveYear(env, b.year);
+      const grades = (Array.isArray(b.grades) ? b.grades : PRIMARY_GRADES).filter((g) => PRIMARY_GRADES.includes(g));
+      const settings = await getSettings(env, year.id);
+      const stmts = [];
+      for (const g of grades) {
+        const digit = g.slice(-1);
+        const base = (await nextSubjectSort(env, year.id, g)) - 10; // ชั้นที่มีวิชาอยู่แล้ว → วิชาพื้นฐานที่เพิ่มต่อท้าย ไม่แทรกกลาง
+        BASIC_TEMPLATE.forEach((t, i) => {
+          stmts.push(env.DB.prepare(`INSERT OR IGNORE INTO gr_subjects (academic_year_id, grade_level, code, name, learning_area, subject_type, hours_per_year, collect_ratio, sort_order)
+            VALUES (?,?,?,?,?, 'basic', ?, ?, ?)`).bind(year.id, g, `${t.p}1${digit}${t.n}`, t.name, LEARNING_AREAS[t.area],
+            Number(digit) <= 3 ? t.lower : t.upper, settings.collect_ratio, base + (i + 1) * 10));
+        });
+      }
+      await batchAll(env, stmts);
+      await syncCourses(env, year.id);
+      await audit(env, user, "subjects.template", { year: year.id, grades });
+      return json({ ok: true, created_for: grades });
+    }
+    if (method === "POST" && !idPart) {
+      const b = await readJson(request);
+      const year = await resolveYear(env, b.year);
+      const s = cleanSubject(b, await getSettings(env, year.id));
+      if (s.sort == null) s.sort = await nextSubjectSort(env, year.id, s.grade);
+      try {
+        const r = await env.DB.prepare(`INSERT INTO gr_subjects (academic_year_id, grade_level, code, name, learning_area, subject_type, hours_per_year, collect_ratio, sort_order)
+          VALUES (?,?,?,?,?,?,?,?,?)`).bind(year.id, s.grade, s.code, s.name, s.area, s.type, s.hours, s.ratio, s.sort).run();
+        await syncCourses(env, year.id, [r.meta.last_row_id]);
+        await audit(env, user, "subject.create", { id: r.meta.last_row_id, ...s });
+        return json({ ok: true, id: r.meta.last_row_id });
+      } catch (e) {
+        if (String(e.message).includes("UNIQUE")) fail(409, `มีรหัสวิชา ${s.code} ของ ${s.grade} อยู่แล้ว`);
+        throw e;
+      }
+    }
+    if (idPart && method === "PUT") {
+      const id = intParam(idPart);
+      const existing = await env.DB.prepare("SELECT * FROM gr_subjects WHERE id = ?").bind(id).first();
+      if (!existing) fail(404, "ไม่พบรายวิชา");
+      const s = cleanSubject(await readJson(request), await getSettings(env, existing.academic_year_id));
+      if (s.sort == null) s.sort = existing.sort_order;
+      if (s.ratio !== existing.collect_ratio || s.hours !== existing.hours_per_year) {
+        // ผลของรายวิชาที่ส่ง/อนุมัติแล้วต้องไม่เปลี่ยนเงียบ ๆ — ให้ส่งคืนก่อน
+        const locked = await env.DB.prepare("SELECT COUNT(*) AS n FROM gr_courses WHERE subject_id = ? AND locked = 1").bind(id).first();
+        if (locked.n > 0) fail(409, `เปลี่ยนสัดส่วนคะแนน/เวลาเรียนไม่ได้ เพราะมี ${locked.n} ห้องส่งผลแล้ว — ส่งคืนให้ครูก่อน`);
+      }
+      const extra = [];
+      if (s.grade !== existing.grade_level) {
+        // รายวิชาของห้องสร้างให้อัตโนมัติ — เปลี่ยนชั้นได้ถ้ายังไม่มีใครใช้ (ไม่มีครูผู้สอน โครงสร้าง คะแนน หรือผล) แล้วสร้างห้องของชั้นใหม่ให้
+        const used = await env.DB.prepare(
+          `SELECT (SELECT COUNT(*) FROM gr_course_teachers ct JOIN gr_courses c ON c.id = ct.course_id WHERE c.subject_id = ?) AS teachers,
+                  (SELECT COUNT(*) FROM gr_items i JOIN gr_courses c ON c.id = i.course_id WHERE c.subject_id = ?) AS items,
+                  (SELECT COUNT(*) FROM gr_results r JOIN gr_courses c ON c.id = r.course_id WHERE c.subject_id = ?) AS results,
+                  (SELECT COUNT(*) FROM gr_units u JOIN gr_courses c ON c.id = u.course_id WHERE c.subject_id = ?) AS units,
+                  (SELECT COUNT(*) FROM gr_courses c WHERE c.subject_id = ? AND c.locked = 1) AS locked`
+        ).bind(id, id, id, id, id).first();
+        if (used.teachers || used.items || used.results || used.units || used.locked) fail(409, "เปลี่ยนระดับชั้นไม่ได้ เพราะห้องเรียนของวิชานี้มีครูผู้สอนหรือข้อมูลคะแนนแล้ว — เพิ่มเป็นรายวิชาใหม่ของชั้นนั้นแทน");
+        extra.push(env.DB.prepare("DELETE FROM gr_courses WHERE subject_id = ?").bind(id));
+      }
+      if (s.code !== existing.code) {
+        // คะแนนยกมา (ปพ.6 โรงเรียนเดิม) ผูกกับรหัสวิชา → เปลี่ยนรหัสตามให้ ไม่ให้คะแนนยกมาหลุดจากวิชา
+        extra.push(env.DB.prepare(`UPDATE gr_carryover SET subject_code = ? WHERE academic_year_id = ? AND subject_code = ?
+            AND student_id IN (SELECT se.student_id FROM student_enrollments se JOIN academic_terms t ON t.id = se.academic_term_id
+                                WHERE t.academic_year_id = ? AND se.grade_level = ?)
+            AND NOT EXISTS (SELECT 1 FROM gr_carryover x WHERE x.academic_year_id = gr_carryover.academic_year_id AND x.student_id = gr_carryover.student_id
+                            AND x.subject_code = ? AND x.term_number = gr_carryover.term_number)`)
+          .bind(s.code, existing.academic_year_id, existing.code, existing.academic_year_id, existing.grade_level, s.code));
+      }
+      try {
+        await env.DB.batch([
+          env.DB.prepare(`UPDATE gr_subjects SET grade_level=?, code=?, name=?, learning_area=?, subject_type=?, hours_per_year=?, collect_ratio=?, sort_order=? WHERE id=?`)
+            .bind(s.grade, s.code, s.name, s.area, s.type, s.hours, s.ratio, s.sort, id),
+          ...extra,
+        ]);
+      } catch (e) {
+        if (String(e.message).includes("UNIQUE")) fail(409, `มีรหัสวิชา ${s.code} ของ ${s.grade} อยู่แล้ว`);
+        throw e;
+      }
+      if (s.grade !== existing.grade_level) await syncCourses(env, existing.academic_year_id, [id]);
+      await audit(env, user, existing.collect_ratio !== s.ratio ? "subject.ratio" : "subject.update", { id, before: existing, after: s });
+      return json({ ok: true });
+    }
+    if (idPart && method === "DELETE") {
+      const id = intParam(idPart);
+      const used = await env.DB.prepare(
+        `SELECT COUNT(*) AS n FROM gr_scores sc JOIN gr_items i ON i.id = sc.item_id JOIN gr_courses c ON c.id = i.course_id
+          WHERE c.subject_id = ? AND sc.score IS NOT NULL`
+      ).bind(id).first();
+      if (used.n > 0) fail(409, `ลบไม่ได้ — มีคะแนนที่ครูกรอกแล้ว ${used.n} ช่อง`);
+      const res = await env.DB.prepare("SELECT COUNT(*) AS n FROM gr_results r JOIN gr_courses c ON c.id = r.course_id WHERE c.subject_id = ?").bind(id).first();
+      if (res.n > 0) fail(409, `ลบไม่ได้ — มีข้อมูลเวลาเรียน/ผลพิเศษของนักเรียนแล้ว ${res.n} คน`);
+      const subject = await env.DB.prepare("SELECT * FROM gr_subjects WHERE id = ?").bind(id).first();
+      if (!subject) fail(404, "ไม่พบรายวิชา");
+      const carry = await env.DB.prepare(
+        `SELECT COUNT(DISTINCT student_id) AS n FROM gr_carryover WHERE academic_year_id = ? AND subject_code = ?
+           AND student_id IN (SELECT se.student_id FROM student_enrollments se JOIN academic_terms t ON t.id = se.academic_term_id WHERE t.academic_year_id = ? AND se.grade_level = ?)`
+      ).bind(subject.academic_year_id, subject.code, subject.academic_year_id, subject.grade_level).first();
+      if (carry.n > 0) fail(409, `ลบไม่ได้ — มีคะแนนยกมาจากโรงเรียนเดิมของวิชานี้ ${carry.n} คน`);
+      // ลบลูกก่อนเพื่อไม่พึ่งการตั้งค่า foreign key
+      await env.DB.batch([
+        env.DB.prepare("DELETE FROM gr_scores WHERE item_id IN (SELECT i.id FROM gr_items i JOIN gr_courses c ON c.id = i.course_id WHERE c.subject_id = ?)").bind(id),
+        env.DB.prepare("DELETE FROM gr_items WHERE course_id IN (SELECT id FROM gr_courses WHERE subject_id = ?)").bind(id),
+        env.DB.prepare("DELETE FROM gr_results WHERE course_id IN (SELECT id FROM gr_courses WHERE subject_id = ?)").bind(id),
+        env.DB.prepare("DELETE FROM gr_course_teachers WHERE course_id IN (SELECT id FROM gr_courses WHERE subject_id = ?)").bind(id),
+        env.DB.prepare("DELETE FROM gr_courses WHERE subject_id = ?").bind(id),
+        env.DB.prepare("DELETE FROM gr_subjects WHERE id = ?").bind(id),
+      ]);
+      await audit(env, user, "subject.delete", subject);
+      return json({ ok: true });
+    }
+  }
+
+  // ---------- รายวิชาของแต่ละห้อง (courses) ----------
+  // ---------- คำขอแก้ไขจากครู (หลังปิดการกรอก/ส่งผลแล้ว) — ฝ่ายวัดผลอนุมัติ ----------
+  if (section === "edit-requests") {
+    if (!user.can_import) fail(403, "พิจารณาคำขอแก้ไขได้เฉพาะฝ่ายวัดผลและผู้ดูแลระบบ");
+    if (method === "GET") {
+      const year = await resolveYear(env, url.searchParams.get("year"));
+      const { results } = await env.DB.prepare(
+        `SELECT r.*, u.full_name AS requested_by_name, d.full_name AS decided_by_name, s.code, s.name AS subject_name
+           FROM gr_edit_requests r LEFT JOIN users u ON u.id = r.requested_by LEFT JOIN users d ON d.id = r.decided_by
+           LEFT JOIN gr_courses c ON c.id = r.course_id LEFT JOIN gr_subjects s ON s.id = c.subject_id
+          WHERE r.academic_year_id = ? ORDER BY (r.status = 'pending') DESC, r.id DESC LIMIT 200`
+      ).bind(year.id).all();
+      const now = nowSql();
+      return json({ year, grant_days: HOMEROOM_GRANT_DAYS, requests: results.map((r) => ({ ...r, active: r.status === "approved" && r.scope === "homeroom" && r.open_until > now })) });
+    }
+    const id = intParam(idPart);
+    if (method !== "POST" || !["approve", "reject", "close"].includes(action)) fail(404, "ไม่พบเส้นทาง API");
+    const r = await env.DB.prepare("SELECT * FROM gr_edit_requests WHERE id = ?").bind(id).first();
+    if (!r) fail(404, "ไม่พบคำขอ");
+    const b = await readJson(request);
+    const note = text(b.note, 500) || null;
+    if (action === "close") { // ปิดสิทธิ์แก้ของห้องก่อนครบกำหนด
+      if (r.status !== "approved" || r.scope !== "homeroom") fail(409, "ปิดได้เฉพาะคำขอของครูประจำชั้นที่อนุมัติแล้ว");
+      await env.DB.prepare("UPDATE gr_edit_requests SET status = 'closed', open_until = ? WHERE id = ?").bind(nowSql(), id).run();
+      await audit(env, user, "edit_request.close", { id });
+      return json({ ok: true });
+    }
+    if (r.status !== "pending") fail(409, "คำขอนี้พิจารณาแล้ว");
+    if (action === "reject") {
+      if (!note || note.length < 3) fail(400, "กรุณาระบุเหตุผลที่ไม่อนุมัติ (ครูจะเห็นข้อความนี้)");
+      await env.DB.prepare("UPDATE gr_edit_requests SET status = 'rejected', decided_by = ?, decided_at = datetime('now'), decision_note = ? WHERE id = ?").bind(user.id, note, id).run();
+      await audit(env, user, "edit_request.reject", { id, note });
+      return json({ ok: true });
+    }
+    const stmts = [];
+    if (r.scope === "course") {
+      // อนุมัติ = ส่งคืนรายวิชา (ถ้าส่งแล้ว) และให้แก้ได้แม้ปิดการกรอก จนกว่าครูจะส่งผลใหม่ → ผ่านขั้นตรวจ/อนุมัติอีกครั้ง
+      const c = await env.DB.prepare("SELECT id, locked, approved_at FROM gr_courses WHERE id = ?").bind(r.course_id).first();
+      if (!c) fail(404, "ไม่พบรายวิชา");
+      stmts.push(env.DB.prepare(`UPDATE gr_courses SET locked = 0, submitted_at = NULL, submitted_by = NULL, approved_at = NULL, approved_by = NULL, reviewed_at = NULL, reviewed_by = NULL,
+          return_note = ?, returned_at = CASE WHEN locked = 1 THEN datetime('now') ELSE returned_at END, returned_by = CASE WHEN locked = 1 THEN ? ELSE returned_by END,
+          edit_granted_at = datetime('now') WHERE id = ?`).bind(`อนุมัติคำขอแก้ไข: ${r.reason}${note ? ` — ${note}` : ""}`, user.id, c.id));
+      stmts.push(env.DB.prepare("INSERT INTO gr_course_edits (course_id, user_id, what, detail) VALUES (?,?,?,?)").bind(c.id, user.id, "อนุมัติคำขอแก้ไข", r.reason));
+    }
+    const until = new Date(Date.now() + HOMEROOM_GRANT_DAYS * 86400e3).toISOString().replace("T", " ").slice(0, 19);
+    stmts.push(env.DB.prepare("UPDATE gr_edit_requests SET status = 'approved', decided_by = ?, decided_at = datetime('now'), decision_note = ?, open_until = ? WHERE id = ?")
+      .bind(user.id, note, r.scope === "homeroom" ? until : null, id));
+    await env.DB.batch(stmts);
+    await audit(env, user, "edit_request.approve", { id, scope: r.scope, course: r.course_id, room: `${r.grade_level}/${r.classroom}` });
+    return json({ ok: true, open_until: r.scope === "homeroom" ? until : null });
+  }
+
+  if (section === "courses") {
+    if (method === "POST" && idPart === "generate") {
+      const b = await readJson(request);
+      const year = await resolveYear(env, b.year);
+      const created = await syncCourses(env, year.id);
+      const total = await countCourses(env, year.id);
+      await audit(env, user, "courses.generate", { year: year.id, created });
+      return json({ ok: true, created, total });
+    }
+    if (method === "GET" && !idPart) {
+      const year = await resolveYear(env, url.searchParams.get("year"));
+      // รายวิชาของชั้น ↔ รายวิชาของห้อง ต้องตรงกันเสมอ: วิชาที่เพิ่มทีหลังยังไม่มีห้อง → สร้างให้ก่อนแสดง
+      await syncCourses(env, year.id);
+      return json({ year, courses: await courseOverview(env, year.id) });
+    }
+    if (method === "POST" && idPart === "assign-room") {
+      // มอบหมายครูคนเดียวให้สอนหลายวิชาของห้องเดียว (ครูประจำชั้นที่สอนเกือบทุกวิชา)
+      const b = await readJson(request);
+      const teacher = intParam(b.user_id, "ครู");
+      const courseIds = (Array.isArray(b.course_ids) ? b.course_ids : []).map((v) => intParam(v));
+      if (!courseIds.length) fail(400, "กรุณาเลือกรายวิชา");
+      await assertTeacher(env, teacher);
+      await batchAll(env, courseIds.map((cid) => env.DB.prepare("INSERT OR IGNORE INTO gr_course_teachers (course_id, user_id) SELECT id, ? FROM gr_courses WHERE id = ?").bind(teacher, cid)));
+      await grantTeacherRole(env, user, [teacher]);
+      await audit(env, user, "courses.assign", { teacher, courseIds });
+      return json({ ok: true });
+    }
+    if (idPart && action === "teachers" && method === "PUT") {
+      const id = intParam(idPart);
+      const b = await readJson(request);
+      const ids = [...new Set((Array.isArray(b.user_ids) ? b.user_ids : []).map((v) => intParam(v, "ครู")))];
+      if (ids.length > 6) fail(400, "กำหนดครูผู้สอนได้ไม่เกิน 6 คนต่อรายวิชา");
+      for (const t of ids) await assertTeacher(env, t);
+      const exists = await env.DB.prepare("SELECT id FROM gr_courses WHERE id = ?").bind(id).first();
+      if (!exists) fail(404, "ไม่พบรายวิชา");
+      await env.DB.batch([
+        env.DB.prepare("DELETE FROM gr_course_teachers WHERE course_id = ?").bind(id),
+        ...ids.map((t) => env.DB.prepare("INSERT INTO gr_course_teachers (course_id, user_id) VALUES (?, ?)").bind(id, t)),
+      ]);
+      await grantTeacherRole(env, user, ids);
+      await audit(env, user, "course.teachers", { id, ids });
+      return json({ ok: true });
+    }
+    // ส่งคืนให้ครูแก้ (ต้องมีเหตุผล) — ใช้ได้ทั้งตอน "ส่งแล้ว" และ "อนุมัติแล้ว" (แก้ผลย้อนหลัง)
+    if (idPart && (action === "return" || (action === "lock" && !(await peekJson(request)).locked)) && method === "POST") {
+      const id = intParam(idPart);
+      const b = await readJson(request);
+      const note = text(b.note, 500);
+      if (note.length < 3) fail(400, "กรุณาระบุเหตุผลที่ส่งคืน (ครูจะเห็นข้อความนี้)");
+      const before = await env.DB.prepare("SELECT locked, approved_at FROM gr_courses WHERE id = ?").bind(id).first();
+      if (!before) fail(404, "ไม่พบรายวิชา");
+      if (!before.locked) fail(409, "รายวิชานี้ยังไม่ได้ส่ง");
+      await env.DB.prepare(`UPDATE gr_courses SET locked = 0, submitted_at = NULL, submitted_by = NULL, approved_at = NULL, approved_by = NULL, reviewed_at = NULL, reviewed_by = NULL,
+        return_note = ?, returned_at = datetime('now'), returned_by = ?, edit_granted_at = datetime('now') WHERE id = ?`).bind(note, user.id, id).run(); // ส่งคืน = ให้ครูแก้ได้แม้ปิดการกรอกแล้ว
+      await audit(env, user, before.approved_at ? "course.reopen_approved" : "course.return", { id, note });
+      return json({ ok: true });
+    }
+    if (idPart && action === "lock" && method === "POST") {
+      const id = intParam(idPart);
+      // บังคับส่งก็ต้องผ่านการตรวจโครงสร้าง (คะแนนเต็มตรงสัดส่วน) — ไม่อย่างนั้นระบบต้องย่อขยายคะแนนเอง ขัดกับกติกาห้ามปัดเศษ
+      const info = await env.DB.prepare("SELECT s.collect_ratio, s.grade_level FROM gr_courses c JOIN gr_subjects s ON s.id = c.subject_id WHERE c.id = ?").bind(id).first();
+      if (!info) fail(404, "ไม่พบรายวิชา");
+      const { results: its } = await env.DB.prepare("SELECT term_number, kind, max_score FROM gr_items WHERE course_id = ?").bind(id).all();
+      const issues = structureIssues(its, info.collect_ratio, indicatorWord(info.grade_level));
+      if (issues.length) fail(400, `ล็อกไม่ได้: ${issues.join(" และ ")}`);
+      const r = await env.DB.prepare("UPDATE gr_courses SET locked = 1, submitted_at = COALESCE(submitted_at, datetime('now')), submitted_by = COALESCE(submitted_by, ?) WHERE id = ?").bind(user.id, id).run();
+      if (!r.meta?.changes) fail(404, "ไม่พบรายวิชา");
+      await audit(env, user, "course.lock", { id });
+      return json({ ok: true });
+    }
+    // ฝ่ายวัดผลตรวจแล้ว (เลือกได้หลายรายวิชา) → ส่งต่อให้ผู้บริหารอนุมัติ
+    if (idPart === "review" && !action && method === "POST") {
+      const b = await readJson(request);
+      const ids = [...new Set((Array.isArray(b.course_ids) ? b.course_ids : []).map((v) => intParam(v)))];
+      if (!ids.length) fail(400, "กรุณาเลือกรายวิชา");
+      const ph = ids.map(() => "?").join(",");
+      const r = await env.DB.prepare(`UPDATE gr_courses SET reviewed_at = datetime('now'), reviewed_by = ? WHERE id IN (${ph}) AND locked = 1 AND reviewed_at IS NULL`).bind(user.id, ...ids).run();
+      await audit(env, user, "course.review", { ids, reviewed: r.meta?.changes ?? 0 });
+      return json({ ok: true, reviewed: r.meta?.changes ?? 0, skipped: ids.length - (r.meta?.changes ?? 0) });
+    }
+    // ผู้บริหารอนุมัติผล (เลือกได้หลายรายวิชา) — อนุมัติได้เฉพาะที่ฝ่ายวัดผลตรวจแล้ว
+    if (idPart === "approve" && !action && method === "POST") {
+      if (!user.is_super) fail(403, "อนุมัติผลได้เฉพาะผู้บริหาร");
+      const b = await readJson(request);
+      const ids = [...new Set((Array.isArray(b.course_ids) ? b.course_ids : []).map((v) => intParam(v)))];
+      if (!ids.length) fail(400, "กรุณาเลือกรายวิชา");
+      const ph = ids.map(() => "?").join(",");
+      const r = await env.DB.prepare(`UPDATE gr_courses SET approved_at = datetime('now'), approved_by = ? WHERE id IN (${ph}) AND locked = 1 AND reviewed_at IS NOT NULL AND approved_at IS NULL`).bind(user.id, ...ids).run();
+      await audit(env, user, "course.approve", { ids, approved: r.meta?.changes ?? 0 });
+      return json({ ok: true, approved: r.meta?.changes ?? 0, skipped: ids.length - (r.meta?.changes ?? 0) });
+    }
+    if (idPart && method === "DELETE") {
+      const id = intParam(idPart);
+      const used = await env.DB.prepare("SELECT COUNT(*) AS n FROM gr_scores sc JOIN gr_items i ON i.id = sc.item_id WHERE i.course_id = ? AND sc.score IS NOT NULL").bind(id).first();
+      if (used.n > 0) fail(409, `ลบไม่ได้ — มีคะแนนแล้ว ${used.n} ช่อง`);
+      const res = await env.DB.prepare("SELECT COUNT(*) AS n FROM gr_results WHERE course_id = ?").bind(id).first();
+      if (res.n > 0) fail(409, `ลบไม่ได้ — มีข้อมูลเวลาเรียน/ผลพิเศษของนักเรียนแล้ว ${res.n} คน`);
+      await env.DB.batch([
+        env.DB.prepare("DELETE FROM gr_scores WHERE item_id IN (SELECT id FROM gr_items WHERE course_id = ?)").bind(id),
+        env.DB.prepare("DELETE FROM gr_items WHERE course_id = ?").bind(id),
+        env.DB.prepare("DELETE FROM gr_results WHERE course_id = ?").bind(id),
+        env.DB.prepare("DELETE FROM gr_course_teachers WHERE course_id = ?").bind(id),
+        env.DB.prepare("DELETE FROM gr_courses WHERE id = ?").bind(id),
+      ]);
+      await audit(env, user, "course.delete", { id });
+      return json({ ok: true });
+    }
+  }
+
+  // ---------- ครูประจำชั้น ----------
+  if (section === "homerooms") {
+    if (method === "GET") {
+      const year = await resolveYear(env, url.searchParams.get("year"));
+      const rooms = (await listRooms(env, year.id)).filter((r) => isSchoolGrade(r.grade_level));
+      const { results } = await env.DB.prepare(
+        `SELECT h.grade_level, h.classroom, u.id, u.full_name FROM gr_homerooms h JOIN users u ON u.id = h.user_id WHERE h.academic_year_id = ? AND ${ACTIVE_USER}`
+      ).bind(year.id).all();
+      results.sort((a, b) => compareThaiName(a.full_name, b.full_name));
+      for (const r of rooms) r.teachers = results.filter((h) => h.grade_level === r.grade_level && h.classroom === r.classroom).map((h) => ({ id: h.id, full_name: h.full_name }));
+      return json({ year, rooms });
+    }
+    if (method === "PUT") {
+      const b = await readJson(request);
+      const year = await resolveYear(env, b.year);
+      const grade = text(b.grade_level, 10), room = text(b.classroom, 10);
+      if (!isSchoolGrade(grade) || !room) fail(400, "ห้องเรียนไม่ถูกต้อง");
+      const ids = [...new Set((Array.isArray(b.user_ids) ? b.user_ids : []).map((v) => intParam(v, "ครู")))];
+      if (ids.length > 4) fail(400, "ครูประจำชั้นได้ไม่เกิน 4 คนต่อห้อง");
+      for (const t of ids) await assertTeacher(env, t);
+      await env.DB.batch([
+        env.DB.prepare("DELETE FROM gr_homerooms WHERE academic_year_id = ? AND grade_level = ? AND classroom = ?").bind(year.id, grade, room),
+        ...ids.map((t) => env.DB.prepare("INSERT INTO gr_homerooms (academic_year_id, grade_level, classroom, user_id) VALUES (?,?,?,?)").bind(year.id, grade, room, t)),
+      ]);
+      await mirrorHomerooms(env, year.id, [{ grade, classroom: room, userIds: ids }], user.id);
+      await grantTeacherRole(env, user, ids);
+      await audit(env, user, "homeroom.set", { year: year.id, grade, room, ids });
+      return json({ ok: true });
+    }
+  }
+
+  // ---------- คลังตัวชี้วัด ----------
+  if (section === "indicator-bank") {
+    // นำเข้า (วาง/ไฟล์แม่แบบ/ชุดเริ่มต้น): ตรวจทุกแถวก่อน มีแถวผิดไม่บันทึกเลย · ตัวชี้วัดที่มีอยู่แล้วข้าม
+    if (method === "POST" && idPart === "import") {
+      const b = await readJson(request);
+      const rows = Array.isArray(b.rows) ? b.rows.slice(0, 3000) : [];
+      if (!rows.length) fail(400, "ไม่มีข้อมูลให้นำเข้า");
+      const KINDER = ["อ.1", "อ.2", "อ.3"];
+      const clean = [], errors = [];
+      for (const [i, r] of rows.entries()) {
+        const err = (m) => errors.push({ row: i + 1, error: m });
+        const grade = text(r.grade_level, 10), area = text(r.learning_area, 80), title = text(r.title, 500), code = text(r.code, 60);
+        const subj = text(r.subject_code, 20).replace(/\s+/g, ""), kind = text(r.kind, 30);
+        if (!PRIMARY_GRADES.includes(grade) && !KINDER.includes(grade)) { err(`ระดับชั้น "${grade}" ไม่ถูกต้อง (ใช้ อ.1–อ.3 หรือ ป.1–ป.6)`); continue; }
+        if (subj && !/^[ก-ฮ]\d{5}$/.test(subj)) { err(`รหัสวิชา "${subj}" ไม่ถูกต้อง`); continue; }
+        if (kind && !BANK_KINDS.includes(kind)) { err(`ประเภท "${kind}" ไม่ถูกต้อง (ใช้: ${BANK_KINDS.join(", ")})`); continue; }
+        if (!area) { err("ไม่มีกลุ่มสาระ/ด้าน"); continue; }
+        // ป.4–6 ต้องตรงกลุ่มสาระในระบบ · ป.1–3 (หลักสูตรใหม่) และอนุบาลรับข้อความอิสระ
+        if (/^ป\.[4-6]$/.test(grade) && !LEARNING_AREAS.includes(area)) { err(`กลุ่มสาระ "${area}" ไม่ตรงกับรายชื่อในระบบ`); continue; }
+        if (!title) { err("ไม่มีข้อความตัวชี้วัด"); continue; }
+        clean.push([area, grade, code, title, subj || null, kind || null]);
+      }
+      const { results: have } = await env.DB.prepare("SELECT grade_level, learning_area, code, title FROM gr_indicator_bank").all();
+      const seen = new Set(have.map((x) => `${x.grade_level}|${x.learning_area}|${x.code || ""}|${x.title}`));
+      const fresh = clean.filter((c) => { const k = `${c[1]}|${c[0]}|${c[2]}|${c[3]}`; if (seen.has(k)) return false; seen.add(k); return true; });
+      if (b.dry_run || errors.length) return json({ ok: !errors.length, dry_run: true, errors, summary: { add: fresh.length, update: 0, skip: clean.length - fresh.length } });
+      await batchAll(env, fresh.map((c) => env.DB.prepare("INSERT OR IGNORE INTO gr_indicator_bank (learning_area, grade_level, code, title, subject_code, kind, created_by) VALUES (?,?,?,?,?,?,?)").bind(...c, user.id)));
+      await audit(env, user, "bank.import", { rows: clean.length, added: fresh.length });
+      return json({ ok: true, added: fresh.length, skipped: clean.length - fresh.length, summary: { add: fresh.length, update: 0, skip: clean.length - fresh.length } });
+    }
+    // ส่งออกทั้งคลัง (รูปแบบเดียวกับแม่แบบนำเข้า)
+    if (method === "GET" && idPart === "export") {
+      const { results } = await env.DB.prepare(`SELECT grade_level, learning_area, COALESCE(subject_code, '') AS subject_code, COALESCE(kind, '') AS kind, COALESCE(code, '') AS code, title
+        FROM gr_indicator_bank ORDER BY grade_level, learning_area, subject_code, id`).all();
+      return json({ rows: results });
+    }
+    // ลบทั้งกลุ่ม (ชั้น × กลุ่มสาระ × รายวิชา)
+    if (method === "DELETE" && idPart === "group") {
+      const g = text(url.searchParams.get("grade"), 10), a = text(url.searchParams.get("area"), 80), sj = text(url.searchParams.get("subject"), 20);
+      const r = await env.DB.prepare("DELETE FROM gr_indicator_bank WHERE grade_level = ? AND learning_area = ? AND COALESCE(subject_code, '') = ?").bind(g, a, sj).run();
+      await audit(env, user, "bank.delete_group", { grade: g, area: a, subject: sj, n: r.meta.changes });
+      return json({ ok: true, deleted: Number(r.meta.changes || 0) });
+    }
+    // สรุปสิ่งที่อยู่ในคลัง: ชั้น × กลุ่มสาระ × รายวิชา
+    if (method === "GET" && !idPart) {
+      const { results } = await env.DB.prepare(`SELECT grade_level, learning_area, COALESCE(subject_code, '') AS subject_code,
+          SUM(kind = 'ระหว่างทาง') AS mid, SUM(kind = 'ปลายทาง') AS final, SUM(kind IN ('ผลการเรียนรู้', 'ผลลัพธ์การเรียนรู้', 'ความสามารถผู้เรียน')) AS outcome, COUNT(*) AS n
+          FROM gr_indicator_bank GROUP BY 1, 2, 3 ORDER BY 1, 3, 2`).all();
+      return json({ groups: results });
+    }
+    // ดูรายการของกลุ่มเดียว (ไว้ตรวจ/ลบ)
+    if (method === "GET" && idPart === "list") {
+      const g = text(url.searchParams.get("grade"), 10), a = text(url.searchParams.get("area"), 80), s = text(url.searchParams.get("subject"), 20);
+      const { results } = await env.DB.prepare(`SELECT id, code, title, kind FROM gr_indicator_bank WHERE grade_level = ? AND learning_area = ? AND COALESCE(subject_code, '') = ? ORDER BY id`).bind(g, a, s).all();
+      return json({ indicators: results });
+    }
+    if (method === "DELETE" && idPart) {
+      await env.DB.prepare("DELETE FROM gr_indicator_bank WHERE id = ?").bind(intParam(idPart)).run();
+      return json({ ok: true });
+    }
+  }
+
+  if (section === "audit" && method === "GET") {
+    const { results } = await env.DB.prepare(
+      "SELECT a.id, a.action, a.detail, a.created_at, u.full_name FROM gr_audit a LEFT JOIN users u ON u.id = a.user_id ORDER BY a.id DESC LIMIT 200"
+    ).all();
+    return json({ entries: results });
+  }
+
+  fail(404, "ไม่พบเส้นทาง API");
+}
+
+// บันทึกค่าตั้งของปี เฉพาะคอลัมน์ที่ส่งมา (คอลัมน์อื่นคงเดิม)
+const SETTING_COLUMNS = ["collect_ratio", "indicator_pass_pct", "indicator_pass_pct_t2", "attendance_pass_pct", "school_name", "school_area",
+  "affiliation", "school_address", "director_name", "deputy_director_name", "academic_head_name", "measurement_head_name", "entry_open", "roster_order", "pilot_rooms"];
+export async function upsertSettings(env, yearId, values, user) {
+  const cols = Object.keys(values).filter((k) => SETTING_COLUMNS.includes(k));
+  await env.DB.prepare("INSERT OR IGNORE INTO gr_settings (academic_year_id) VALUES (?)").bind(yearId).run();
+  await env.DB.prepare(`UPDATE gr_settings SET ${cols.map((c) => `${c} = ?`).join(", ")}, updated_by = ?, updated_at = datetime('now') WHERE academic_year_id = ?`)
+    .bind(...cols.map((c) => values[c]), user.id, yearId).run();
+}
+
+// "ป.4/2", "ป4/2", "ป. 4 / 2", "4/2" → "ป.4/2" · อนุบาล "อ.1/2", "อ1/2", "อนุบาล 1/2" → "อ.1/2"
+export function normRoom(v) {
+  const s = String(v ?? "").replace(/\s+/g, "");
+  const k = s.match(/^(?:อ\.?|อนุบาล)([1-3])\/(\d+)$/);
+  if (k) return `อ.${k[1]}/${Number(k[2])}`;
+  const m = s.match(/^(?:ป\.?|ประถมศึกษาปีที่)?([1-6])\/(\d+)$/);
+  return m ? `ป.${m[1]}/${Number(m[2])}` : String(v ?? "").trim();
+}
+
+// จับคู่ชื่อครูในไฟล์กับบัญชีผู้ใช้: ตรงกับอีเมล หรือชื่อ-สกุล (ไม่สนคำนำหน้าและช่องว่าง)
+const PREFIX = /^(นางสาว|นาง|นาย|น\.ส\.|ว่าที่ร้อยตรี|ว่าที่ ร\.ต\.|ดร\.|ครู)\s*/;
+const normName = (n) => {
+  let s = String(n || "").trim(), prev;
+  do { prev = s; s = s.replace(PREFIX, ""); } while (s !== prev); // คำนำหน้าซ้อนกันได้ เช่น "นางครู…"
+  return s.replace(/\s+/g, "");
+};
+async function teacherMatcher(env) {
+  const { results } = await env.DB.prepare("SELECT id, email, full_name FROM users WHERE status = 'active' AND deleted_at IS NULL").all();
+  const byEmail = new Map(results.map((u) => [String(u.email).toLowerCase(), u.id]));
+  const byName = new Map();
+  for (const u of results) { const k = normName(u.full_name); byName.set(k, byName.has(k) ? -1 : u.id); }
+  return (name) => {
+    const id = byEmail.get(name.toLowerCase()) ?? byName.get(normName(name));
+    if (id === -1) fail(400, `ชื่อ "${name}" ซ้ำกันหลายบัญชี ให้ใช้อีเมลแทน`);
+    if (!id) fail(400, `ไม่พบบัญชีครู "${name}" (ใช้ชื่อ-สกุลตามระบบ หรืออีเมล)`);
+    return id;
+  };
+}
+
+// อ่าน body โดยไม่กิน stream (ใช้แยกเส้นทาง lock เก่า)
+async function peekJson(request) {
+  try { return await request.clone().json(); } catch { return {}; }
+}
+
+// สร้างรายวิชาของห้อง (gr_courses) ที่ยังขาด ให้ทุกวิชาของชั้นมีครบทุกห้องของชั้นนั้น (เฉพาะห้องที่เปิดใช้ถ้าตั้งไว้)
+// ไม่ลบของเดิม — ครูผู้สอน/คะแนนที่มีอยู่ไม่กระทบ คืนจำนวนที่สร้างเพิ่ม
+export async function syncCourses(env, yearId, subjectIds = null) {
+  const pilot = (await getSettings(env, yearId)).pilot_rooms;
+  const rooms = (await listRooms(env, yearId)).filter((r) => isPrimaryGrade(r.grade_level) && (!pilot || pilot.includes(`${r.grade_level}/${r.classroom}`)));
+  const { results: subjects } = await env.DB.prepare("SELECT id, grade_level FROM gr_subjects WHERE academic_year_id = ?").bind(yearId).all();
+  const { results: have } = await env.DB.prepare("SELECT c.subject_id, c.classroom FROM gr_courses c JOIN gr_subjects s ON s.id = c.subject_id WHERE s.academic_year_id = ?").bind(yearId).all();
+  const exists = new Set(have.map((c) => `${c.subject_id}|${c.classroom}`));
+  const only = subjectIds ? new Set(subjectIds.map(Number)) : null;
+  const stmts = [];
+  for (const s of subjects) {
+    if (only && !only.has(s.id)) continue;
+    for (const r of rooms) if (r.grade_level === s.grade_level && !exists.has(`${s.id}|${r.classroom}`)) {
+      stmts.push(env.DB.prepare("INSERT OR IGNORE INTO gr_courses (subject_id, classroom) VALUES (?, ?)").bind(s.id, r.classroom));
+    }
+  }
+  if (stmts.length) await batchAll(env, stmts);
+  return stmts.length;
+}
+
+// ลำดับในรายงานของวิชาที่เพิ่มใหม่: ต่อท้ายวิชาของชั้นนั้น
+async function nextSubjectSort(env, yearId, grade) {
+  const r = await env.DB.prepare("SELECT COALESCE(MAX(sort_order), 0) AS mx FROM gr_subjects WHERE academic_year_id = ? AND grade_level = ?").bind(yearId, grade).first();
+  return (r.mx || 0) + 10;
+}
+
+async function countCourses(env, yearId) {
+  const r = await env.DB.prepare("SELECT COUNT(*) AS n FROM gr_courses c JOIN gr_subjects s ON s.id = c.subject_id WHERE s.academic_year_id = ?").bind(yearId).first();
+  return r.n;
+}
+
+// ครูที่เพิ่งสมัคร (ยังไม่มีบทบาท) เมื่อฝ่ายวัดผลมอบหมายวิชา/ประจำชั้น → ได้บทบาท "ครู" ทันที (ไม่เปลี่ยนบทบาทที่มีอยู่แล้ว)
+async function grantTeacherRole(env, actor, ids) {
+  const list = [...new Set(ids.map(Number).filter(Boolean))];
+  if (!list.length) return;
+  const ph = list.map(() => "?").join(",");
+  const { results } = await env.DB.prepare(`SELECT id FROM users WHERE role IS NULL AND id IN (${ph}) AND NOT EXISTS (SELECT 1 FROM viewer_accounts v WHERE v.user_id = users.id)`).bind(...list).all();
+  if (!results.length) return;
+  await env.DB.prepare(`UPDATE users SET role = 'teacher', approved_at = COALESCE(approved_at, datetime('now')), approved_by = COALESCE(approved_by, ?)
+    WHERE role IS NULL AND id IN (${results.map(() => "?").join(",")})`).bind(actor.id, ...results.map((r) => r.id)).run();
+  await audit(env, actor, "users.grant_teacher", { users: results.map((r) => r.id) });
+}
+
+async function assertTeacher(env, id) {
+  const t = await env.DB.prepare("SELECT id FROM users WHERE id = ? AND status = 'active' AND deleted_at IS NULL").bind(id).first();
+  if (!t) fail(400, "ผู้ใช้ที่เลือกไม่ใช่บัญชีครูที่ใช้งานอยู่");
+}
+
+// ภาพรวมรายวิชาทุกห้อง + ความคืบหน้าการกรอก (ใช้หน้า admin)
+export async function courseOverview(env, yearId, { teacherId = null } = {}) {
+  const teacherFilter = teacherId ? " AND c.id IN (SELECT course_id FROM gr_course_teachers WHERE user_id = ?)" : "";
+  const { results: courses } = await env.DB.prepare(
+    `SELECT c.id, c.classroom, c.locked, c.submitted_at, c.approved_at, c.reviewed_at, c.return_note, c.returned_at, s.id AS subject_id, s.grade_level, s.code, s.name, s.learning_area,
+            s.subject_type, s.hours_per_year, s.sort_order,
+            (SELECT COUNT(*) FROM gr_items i WHERE i.course_id = c.id) AS item_count,
+            (SELECT COUNT(*) FROM gr_scores sc JOIN gr_items i ON i.id = sc.item_id WHERE i.course_id = c.id AND sc.score IS NOT NULL) AS filled
+       FROM gr_courses c JOIN gr_subjects s ON s.id = c.subject_id
+      WHERE s.academic_year_id = ?${teacherFilter}`
+  ).bind(...(teacherId ? [yearId, teacherId] : [yearId])).all();
+  const { results: teachers } = await env.DB.prepare(
+    `SELECT ct.course_id, u.id, u.full_name FROM gr_course_teachers ct JOIN users u ON u.id = ct.user_id
+       JOIN gr_courses c ON c.id = ct.course_id JOIN gr_subjects s ON s.id = c.subject_id WHERE s.academic_year_id = ? AND ${ACTIVE_USER}`
+  ).bind(yearId).all();
+  teachers.sort((a, b) => compareThaiName(a.full_name, b.full_name));
+  const rooms = await listRooms(env, yearId);
+  const { results: edits } = await env.DB.prepare("SELECT course_id, COUNT(*) AS n FROM gr_course_edits GROUP BY course_id").all();
+  const editCounts = Object.fromEntries(edits.map((e) => [e.course_id, e.n]));
+  const size = Object.fromEntries(rooms.map((r) => [`${r.grade_level}|${r.classroom}`, r.students]));
+  for (const c of courses) {
+    c.teachers = teachers.filter((t) => t.course_id === c.id).map((t) => ({ id: t.id, full_name: t.full_name }));
+    c.students = size[`${c.grade_level}|${c.classroom}`] || 0;
+    const expected = c.item_count * c.students;
+    c.progress = expected ? Math.min(100, Math.round((c.filled / expected) * 100)) : 0;
+    c.status = !c.locked ? "draft" : c.approved_at ? "approved" : c.reviewed_at ? "reviewed" : "submitted";
+    c.edit_count = editCounts[c.id] || 0;
+  }
+  return courses.sort((a, b) => compareRoom(a, b) || compareSubject(a, b));
+}

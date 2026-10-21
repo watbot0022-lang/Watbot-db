@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>เข้าสู่ระบบ — รายงานผลการเรียน</title>
+<link rel="icon" href="/logo.png">
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<main class="auth">
+  <div class="auth-card">
+    <img src="/logo.png" alt="ตราโรงเรียน">
+    <h1>ระบบรายงานผลการเรียน</h1>
+    <p class="muted" id="school">โรงเรียนวัดโบสถ์ (ราษฎร์รังสฤษฏ์)</p>
+    <p class="muted small" id="loading">กำลังโหลด…</p>
+
+    <form id="setupForm" hidden>
+      <div class="note"><b>ติดตั้งครั้งแรก</b> — สร้างบัญชีผู้ดูแลระบบ (ทำครั้งเดียว) จากนั้นเพิ่มครูได้ที่เมนูบัญชีผู้ใช้</div>
+      <div class="err" hidden></div>
+      <label class="field">ชื่อ-สกุล<input name="full_name" required maxlength="120" placeholder="นายสมชาย ใจดี"></label>
+      <label class="field">อีเมล หรือชื่อผู้ใช้<input name="email" required maxlength="120" autocapitalize="off" autocomplete="username" placeholder="admin หรือ name@gmail.com"></label>
+      <label class="field">รหัสผ่าน (อย่างน้อย 8 ตัว มีทั้งตัวอักษรและตัวเลข)<input type="password" name="password" required minlength="8" autocomplete="new-password"></label>
+      <label class="field">ปีการศึกษาปัจจุบัน (พ.ศ.)<input name="year_be" inputmode="numeric" required></label>
+      <button class="btn primary">สร้างบัญชีผู้ดูแลระบบ</button>
+    </form>
+
+    <form id="loginForm" hidden>
+      <div class="err" hidden></div>
+      <label class="field">อีเมล หรือชื่อผู้ใช้<input name="email" required autocapitalize="off" autocomplete="username"></label>
+      <label class="field">รหัสผ่าน<input type="password" name="password" required autocomplete="current-password"></label>
+      <button class="btn primary">เข้าสู่ระบบ</button>
+      <p class="small muted" style="margin:0">ลืมรหัสผ่าน: ติดต่อผู้ดูแลระบบหรือทีมวัดผลให้ตั้งรหัสผ่านใหม่ · ครูที่ยังไม่มีบัญชี <a href="#register" id="toReg">สมัครใช้งาน</a></p>
+    </form>
+
+    <form id="regForm" hidden>
+      <div class="err" hidden></div>
+      <label class="field">ชื่อ-สกุล (มีคำนำหน้า)<input name="full_name" required maxlength="120" placeholder="นางสาวสมศรี รักเรียน"></label>
+      <label class="field">ตำแหน่ง<input name="position" maxlength="120" placeholder="ครู / ครูผู้ช่วย"></label>
+      <label class="field">อีเมล หรือชื่อผู้ใช้<input name="email" required maxlength="120" autocapitalize="off" autocomplete="username"></label>
+      <label class="field">รหัสผ่าน (อย่างน้อย 8 ตัว มีทั้งตัวอักษรและตัวเลข)<input type="password" name="password" required minlength="8" autocomplete="new-password"></label>
+      <button class="btn primary">สมัครใช้งาน</button>
+      <p class="small muted" style="margin:0">หลังสมัคร ฝ่ายวัดผลจะกำหนดวิชาที่สอนหรือบทบาทให้ · <a href="#login" id="toLogin">กลับไปเข้าสู่ระบบ</a></p>
+    </form>
+  </div>
+</main>
+<script type="module">
+import { api } from "/js/app.js";
+const forms = { setup: document.getElementById("setupForm"), login: document.getElementById("loginForm"), register: document.getElementById("regForm") };
+const show = (k) => { for (const [n, f] of Object.entries(forms)) f.hidden = n !== k; document.getElementById("loading").hidden = true; forms[k].querySelector("input")?.focus(); };
+const next = () => { const n = new URLSearchParams(location.search).get("next"); return n && n.startsWith("/") && !n.startsWith("//") && !n.startsWith("/login") ? n : "/"; };
+function bind(form, path, label, extra = () => ({})) {
+  const err = form.querySelector(".err"), go = form.querySelector("button");
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    err.hidden = true; go.disabled = true; go.textContent = "กำลังดำเนินการ…";
+    try {
+      const r = await api(path, { method: "POST", body: { ...Object.fromEntries(new FormData(form)), ...extra() } });
+      location.href = r.must_change ? "/account.html?first=1" : next();
+    } catch (ex) {
+      err.textContent = ex.message; err.hidden = false;
+      go.disabled = false; go.textContent = label;
+    }
+  });
+}
+bind(forms.setup, "/api/auth/setup", "สร้างบัญชีผู้ดูแลระบบ");
+bind(forms.login, "/api/auth/login", "เข้าสู่ระบบ");
+bind(forms.register, "/api/auth/register", "สมัครใช้งาน");
+document.getElementById("toReg").onclick = (e) => { e.preventDefault(); show("register"); };
+document.getElementById("toLogin").onclick = (e) => { e.preventDefault(); show("login"); };
+const d = new Date();
+forms.setup.year_be.value = d.getFullYear() + 543 - (d.getMonth() < 4 ? 1 : 0);
+try {
+  const st = await api("/api/auth/status");
+  if (st.school) document.getElementById("school").textContent = st.school;
+  show(st.needs_setup ? "setup" : location.hash === "#register" ? "register" : "login");
+} catch (ex) {
+  document.getElementById("loading").textContent = `เชื่อมต่อระบบไม่ได้: ${ex.message}`;
+}
+</script>
+</body>
+</html>

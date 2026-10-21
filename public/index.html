@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>รายวิชาที่สอน — รายงานผลการเรียน</title>
+<link rel="icon" href="/logo.png">
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<main class="page" id="main" hidden>
+  <div class="page-head">
+    <div>
+      <h1 id="hello">รายวิชาที่สอน</h1>
+      <p id="yearLine"></p>
+    </div>
+  </div>
+  <div class="note warn" id="closedNote" hidden>ปิดระบบการกรอกคะแนนของปีการศึกษานี้แล้ว ดูผลได้แต่แก้ไขไม่ได้</div>
+  <div class="dash" style="margin-top:14px">
+    <section class="panel">
+      <div class="panel-head"><h2>รายวิชาที่สอน</h2><span class="muted small" id="courseCount"></span></div>
+      <div id="courses"></div>
+    </section>
+    <aside>
+      <section class="panel">
+        <div class="panel-head"><h2>ห้องที่เป็นครูประจำชั้น</h2></div>
+        <div id="homerooms"></div>
+      </section>
+    </aside>
+  </div>
+</main>
+<script type="module">
+import { shell, esc, withYear } from "/js/app.js";
+const me = await shell("home");
+document.getElementById("main").hidden = false;
+const y = me.year.id;
+document.getElementById("yearLine").textContent = `สวัสดี ${me.user.full_name} · ปีการศึกษา ${me.year.year_be}`;
+document.getElementById("closedNote").hidden = !!me.settings.entry_open;
+
+const cbox = document.getElementById("courses");
+document.getElementById("courseCount").textContent = me.courses.length ? `${me.courses.length} รายวิชา` : "";
+cbox.innerHTML = me.courses.length ? me.courses.map((c) => `
+  <a class="course-row" href="${withYear(`/course.html?id=${c.id}`, y)}">
+    <span class="room-chip">${esc(c.grade_level)}/${esc(c.classroom)}</span>
+    <span><span class="title">${esc(c.code)} ${esc(c.name)}</span><span class="sub"> · ${c.hours_per_year} ชม./ปี · ${c.students} คน</span>
+      ${c.status === "approved" ? '<br><span class="tag ok">อนุมัติแล้ว</span>' : c.status === "submitted" ? '<br><span class="tag">ส่งแล้ว รออนุมัติ</span>'
+        : c.return_note ? '<br><span class="tag warn">ส่งคืนให้แก้</span>' : c.item_count ? "" : '<br><span class="tag warn">ยังไม่ได้ตั้งโครงสร้างคะแนน</span>'}</span>
+    <span class="meter-cell"><span class="small muted">กรอกแล้ว ${c.progress}%</span><div class="meter ${c.progress >= 100 ? "done" : ""}"><i style="width:${c.progress}%"></i></div></span>
+    <span class="go btn small">เปิดสมุดคะแนน</span>
+  </a>`).join("") : `<div class="empty"><strong>ยังไม่มีรายวิชาที่ได้รับมอบหมาย</strong>ให้ฝ่ายวิชาการกำหนดครูผู้สอนในหน้าตั้งค่ารายวิชา</div>`;
+
+const hbox = document.getElementById("homerooms");
+hbox.innerHTML = me.homerooms.length ? me.homerooms.map((h) => `
+  <a class="course-row" style="grid-template-columns:74px 1fr" href="${withYear(`/homeroom.html?grade=${encodeURIComponent(h.grade_level)}&room=${encodeURIComponent(h.classroom)}`, y)}">
+    <span class="room-chip">${esc(h.grade_level)}/${esc(h.classroom)}</span>
+    <span><span class="title">ประเมินและ ปพ.6</span><span class="sub"> · ${h.students} คน</span></span>
+  </a>`).join("") : `<p class="muted small">ยังไม่ได้เป็นครูประจำชั้นของห้องใดในปีนี้</p>`;
+
+</script>
+</body>
+</html>
