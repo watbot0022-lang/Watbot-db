@@ -15,6 +15,12 @@ const STATUS_TH = { enrolled: "กำลังเรียน", transferred: "�
 const validRoom = (key) => { const [g, r] = String(key).split("/"); return isSchoolGrade(g) && /^\d{1,2}$/.test(r || ""); };
 
 // วันเกิดจากไฟล์: 2018-05-31 · 31/05/2561 (พ.ศ.) · 31/5/2018 → ปปปป-ดด-วว (ค.ศ.) · ไม่ถูกต้อง = null
+// ส่งออกวันเกิดแบบเดียวกับแม่แบบนำเข้า (วว/ดด/ปปปป พ.ศ.) — นำกลับเข้าได้ทันที
+export function thaiBirth(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
+  return m ? `${m[3]}/${m[2]}/${Number(m[1]) + 543}` : iso || "";
+}
+
 export function parseBirth(v) {
   const s = String(v ?? "").trim();
   if (!s) return "";
@@ -60,7 +66,7 @@ export async function handleRoster(request, env, user, parts, method, url) {
       for (const s of await roomRoster(env, year.id, r.grade_level, r.classroom)) {
         const d = det.get(s.id) || {};
         out.push({ student_code: s.student_code, name_prefix: s.name_prefix || "", first_name: s.first_name || "", last_name: s.last_name || "", gender: s.gender || d.gender || "",
-          national_id: s.national_id || "", birth_date: s.birth_date || "", room: `${r.grade_level}/${r.classroom}`, number: s.number ?? "",
+          national_id: s.national_id || "", birth_date: thaiBirth(s.birth_date), room: `${r.grade_level}/${r.classroom}`, number: s.number ?? "",
           status: STATUS_TH[statusOf.get(s.id)] || "", ...Object.fromEntries(EXTRA_FIELDS.map((f) => [f, d[f] || ""])) });
       }
     }
@@ -106,8 +112,8 @@ export async function handleRoster(request, env, user, parts, method, url) {
       stmts.push(env.DB.prepare("UPDATE students SET national_id = ? WHERE id = ?").bind(nid || null, sid));
     }
     if ("birth_date" in b) {
-      const bd = String(b.birth_date || "");
-      if (bd && (!/^\d{4}-\d{2}-\d{2}$/.test(bd) || Number.isNaN(Date.parse(bd)))) fail(400, "วันเกิดไม่ถูกต้อง");
+      const bd = parseBirth(b.birth_date);
+      if (bd === null) fail(400, "วันเกิดไม่ถูกต้อง (ใช้ 31/05/2561)");
       stmts.push(env.DB.prepare("UPDATE students SET birth_date = ? WHERE id = ?").bind(bd || null, sid));
     }
     if ("gender" in b) {

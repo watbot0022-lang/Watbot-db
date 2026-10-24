@@ -385,7 +385,8 @@ export function editGate(container, state, requestPath) {
   const banner = document.createElement("div");
   container.before(banner);
   let st = state;
-  const INPUTS = "td input, td select, .level-select, .cm-field textarea, .num-in";
+  // ปุ่มคลังข้อความ/ใช้กับทั้งห้อง ก็ปิดด้วย (ดูอย่างเดียวต้องไม่มีปุ่มที่กดแล้วบันทึก)
+  const INPUTS = "td input, td select, .level-select, .cm-field textarea, .num-in, #bankSave, .chip-use, [data-all], [data-fill]";
   const lock = () => {
     if (!st || st.open) return;
     for (const el of container.querySelectorAll(INPUTS)) if (!el.disabled) { el.disabled = true; el.title = st.why === "viewer" ? "ผู้บริหารดูได้อย่างเดียว" : "ปิดการกรอกแล้ว — ส่งคำขอแก้ไขถึงฝ่ายวัดผลก่อน"; }

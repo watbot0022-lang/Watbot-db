@@ -545,3 +545,6 @@ details.panel > summary { cursor: pointer; }
 
 /* Cloudflare Turnstile (กันบอท) */
 .turnstile-box { min-height: 65px; }
+
+/* ข้อความที่ต้องอยู่บรรทัดเดียว (ชื่อ วันเวลา ตัวเลข) */
+.nowrap { white-space: nowrap; }

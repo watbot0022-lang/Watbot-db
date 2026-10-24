@@ -8,6 +8,7 @@
 //   เพราะระบบทะเบียนจะยกรายชื่อขึ้นภาคใหม่ก็ต่อเมื่อภาคนั้นยังว่างอยู่
 // - อัปเดต students.status/grade_level/classroom ให้ตรงกัน (ระบบทะเบียนมี trigger ซิงก์ภาคที่เปิดใช้อยู่ให้เอง)
 import { json, readJson, fail, requireImporter, intParam, text, audit } from "../lib/http.js";
+import { parseBirth } from "./roster.js";
 import { resolveYear, listRooms, studentName, isSchoolGrade, getSettings, LEFT_STATUSES, roomRoster, thaiToday } from "../lib/data.js";
 
 const OUT_REASONS = { transfer: "transferred", dropout: "withdrawn" };
@@ -194,7 +195,7 @@ export async function handleMoves(request, env, user, parts, method, url) {
       const r = await env.DB.prepare(
         `INSERT INTO students (student_code, full_name, national_id, name_prefix, first_name, last_name, birth_date, grade_level, classroom, status)
          VALUES (?,?,?,?,?,?,?,?,?,'enrolled')`
-      ).bind(code, `${prefix}${first} ${last}`, nid || null, prefix || null, first, last, dateOrNull(n.birth_date), grade, room).run();
+      ).bind(code, `${prefix}${first} ${last}`, nid || null, prefix || null, first, last, parseBirth(n.birth_date) || null, grade, room).run();
       sid = r.meta.last_row_id;
       const gender = n.gender === "ช" || n.gender === "ญ" ? n.gender : (/ชาย/.test(prefix) ? "ช" : /หญิง/.test(prefix) ? "ญ" : null);
       if (gender) await env.DB.prepare(`INSERT INTO student_details (student_id, gender) VALUES (?, ?)

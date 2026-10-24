@@ -4,7 +4,7 @@ import { analyzeBody, ageText, levelClass, loadGrowthRefs } from "/js/growth.js"
 import { KINDER_DOMAINS, KINDER_COMMENT_FIELDS, KINDER_LEVELS, levelLabel, domainSummary, overallSummary, shortCode } from "/js/kinder.js";
 import { createChecker } from "/js/spellcheck.js";
 
-await shell("home");
+const me = await shell("home");
 const p = params();
 const grade = p.get("grade"), room = p.get("room");
 const yearQ = p.get("year") ? `&year=${encodeURIComponent(p.get("year"))}` : "";
@@ -38,7 +38,12 @@ document.title = `ครูประจำชั้น ${grade}/${room}`;
 document.getElementById("title").textContent = `ครูประจำชั้น ${grade}/${room}`;
 const active = () => data.students.filter((s) => s.enrollment_status === "enrolled");
 document.getElementById("meta").textContent = `ปีการศึกษา ${data.year.year_be} · นักเรียน ${active().length} คน${data.teachers?.length ? ` · ครูประจำชั้น ${data.teachers.join(", ")}` : ""}`;
-document.getElementById("backLink").href = withYear("/", data.year.id);
+{ // ลิงก์ย้อนกลับตามบทบาท (ผู้บริหาร/ฝ่ายวัดผลไม่ได้มาจากหน้า "รายวิชาที่สอน")
+  const back = document.getElementById("backLink");
+  if (me?.role === "exec") { back.textContent = "ภาพรวมการส่งผล"; back.href = "/"; }
+  else if (me?.role === "measure" || me?.role === "admin") { back.textContent = "ครูประจำชั้น"; back.href = "/admin.html#homerooms"; }
+  else back.href = withYear("/", data.year.id);
+}
 const pp6 = document.getElementById("pp6Btn");
 pp6.innerHTML = `${ICONS.print} ${/^อ\./.test(grade) ? "เอกสารของห้อง" : "ปพ.6 และเอกสารของห้อง"}`;
 pp6.href = `/docs.html?room=${encodeURIComponent(`${grade}/${room}`)}`;

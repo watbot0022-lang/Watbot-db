@@ -50,7 +50,8 @@ export function toolbar(title, extra = "") {
 
 export function status(msg) {
   const el = document.getElementById("doc");
-  el.innerHTML = `<div class="status">${esc(msg)}</div>`;
+  // หน้าพิมพ์เปิดในแท็บใหม่ — มีทางกลับให้เสมอ เมื่อเปิดเอกสารไม่ได้
+  el.innerHTML = `<div class="status">${esc(msg)}<div style="margin-top:12px;font-size:14px"><a href="/docs.html">ไปคลังเอกสาร</a> · <a href="/">กลับหน้าแรก</a></div></div>`;
 }
 
 export const GRADE_TEXT = { "4": "ดีเยี่ยม", "3.5": "ดีมาก", "3": "ดี", "2.5": "ค่อนข้างดี", "2": "น่าพอใจ", "1.5": "พอใช้", "1": "ผ่านเกณฑ์ขั้นต่ำ", "0": "ต่ำกว่าเกณฑ์", "ร": "รอการตัดสิน", "มส": "ไม่มีสิทธิ์สอบ" };

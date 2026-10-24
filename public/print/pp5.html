@@ -44,6 +44,8 @@ const statusNote = (x) => x.transfer_in_term ? `ย้ายเข้า` : x.en
 const pctOf = (n, all) => all ? fixed((n / all) * 100, 2) : td("0.00"); // ร้อยละ ตัดทศนิยมตำแหน่งที่ 3 ทิ้ง ไม่ปัด
 const dots = (name, w = "................................................") => name ? esc(name) : w;
 const chunk = (arr, n) => { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; };
+// แบ่งให้แต่ละหน้ามีจำนวนเท่า ๆ กัน (ไม่เกิน n ต่อหน้า) เช่น 8 ตัว → 4 + 4 แทน 6 + 2 ที่หน้าหลังโล่ง
+const chunkEven = (arr, n) => { const pages = Math.ceil(arr.length / n) || 1; return chunk(arr, Math.ceil(arr.length / pages) || n); };
 // "ท 1.1 ป.4/2" → { std: "ท 1.1", no: "2" }
 function splitCode(code) {
   const m = String(code || "").match(/^(.*?)\s*ป\.\s*\d\s*\/\s*(\d+)\s*$/);
@@ -139,7 +141,7 @@ function book(d) {
     const inds = d.items.filter((i) => i.term_number === term && i.kind === "indicator");
     if (!inds.length) return "";
     const order = Object.fromEntries(inds.map((it, k) => [it.id, k + 1]));
-    return chunk(inds, 6).map((part) => `<section class="sheet land">${mark}
+    return chunkEven(inds, 6).map((part) => `<section class="sheet land">${mark}
       ${head(`ผลการประเมิน${W} ภาคเรียนที่ ${td(term)}`)}
       <table class="t tiny" style="table-layout:fixed">
         <colgroup><col style="width:9mm"><col style="width:15mm"><col style="width:60mm">${part.map(() => '<col><col style="width:11mm"><col style="width:8mm">').join("")}</colgroup>

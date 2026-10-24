@@ -205,11 +205,11 @@ function importCard(host, kind, { onDone } = {}) {
     const errAt = Object.fromEntries(r.errors.map((e) => [e.row, e.error]));
     const sm = r.summary;
     const shown = rows.length > 500 && !r.errors.length ? rows.slice(0, 200) : rows;
-    out.innerHTML = `${r.errors.length ? `<p class="note bad">พบข้อผิดพลาด ${r.errors.length} แถว — แก้ในไฟล์แล้ววางใหม่ (ยังไม่บันทึกอะไร)</p>`
+    out.innerHTML = `${r.errors.length ? `<p class="note bad">พบข้อผิดพลาด ${r.errors.length} แถว — แก้ในไฟล์แล้ววางใหม่ (ยังไม่บันทึกอะไร)<br><span class="small">${r.errors.slice(0, 3).map((e) => `แถว ${e.row}: ${esc(e.error)}`).join("<br>")}${r.errors.length > 3 ? `<br>… และอีก ${r.errors.length - 3} แถว (ดูช่อง "ผลตรวจ")` : ""}</span></p>`
         : `<p class="note">ข้อมูลถูกต้อง ${rows.length} แถว · เพิ่มใหม่ ${sm.add}${sm.update ? ` · แก้ของเดิม ${sm.update}` : ""}${sm.skip ? ` · มีอยู่แล้ว (ข้าม) ${sm.skip}` : ""}</p>`}
-      <div class="table-wrap" style="max-height:420px;margin-top:10px"><table class="list"><thead><tr><th>แถว</th>${cols.map((c) => `<th>${c.label}</th>`).join("")}<th>ผลตรวจ</th></tr></thead>
-      <tbody>${shown.map((x, i) => `<tr${errAt[i + 1] ? ' style="background:var(--bad-bg)"' : ""}><td class="num">${i + 1}</td>${cols.map((c) => `<td>${esc(c.key === "password" && x[c.key] ? "••••••" : x[c.key])}</td>`).join("")}
-        <td class="small">${errAt[i + 1] ? `<span style="color:var(--bad)">${esc(errAt[i + 1])}</span>` : '<span class="tag ok">ถูกต้อง</span>'}</td></tr>`).join("")}</tbody></table></div>
+      <div class="table-wrap" style="max-height:420px;margin-top:10px"><table class="list"><thead><tr><th>แถว</th><th>ผลตรวจ</th>${cols.map((c) => `<th>${c.label}</th>`).join("")}</tr></thead>
+      <tbody>${shown.map((x, i) => `<tr${errAt[i + 1] ? ' style="background:var(--bad-bg)"' : ""}><td class="num">${i + 1}</td>
+        <td class="small" style="min-width:160px">${errAt[i + 1] ? `<span style="color:var(--bad)">${esc(errAt[i + 1])}</span>` : '<span class="tag ok">ถูกต้อง</span>'}</td>${cols.map((c) => `<td>${esc(c.key === "password" && x[c.key] ? "••••••" : x[c.key])}</td>`).join("")}</tr>`).join("")}</tbody></table></div>
       ${shown.length < rows.length ? `<p class="muted small">แสดง ${shown.length} แถวแรกจาก ${rows.length} แถว</p>` : ""}
       ${r.errors.length ? "" : `<div class="actions" style="margin-top:12px"><button class="btn primary" data-save>บันทึก ${rows.length} แถว</button></div>`}`;
     const save = out.querySelector("[data-save]");
@@ -544,7 +544,7 @@ async function renderStudents() {
       <td><input data-f="last_name" value="${esc(s.last_name)}" aria-label="นามสกุล" style="min-width:130px"></td>
       <td><select data-f="gender" style="width:70px" aria-label="เพศ"><option value="">–</option><option ${s.gender === "ช" ? "selected" : ""} value="ช">ช</option><option ${s.gender === "ญ" ? "selected" : ""} value="ญ">ญ</option></select></td>
       <td><input data-f="national_id" inputmode="numeric" maxlength="17" value="${esc(s.national_id)}" style="width:150px" aria-label="เลขประจำตัวประชาชน ${esc(s.name)}"></td>
-      <td><input data-f="birth_date" type="date" value="${esc(s.birth_date)}" style="width:150px" aria-label="วันเกิด ${esc(s.name)}"></td>
+      <td><input data-f="birth_date" inputmode="numeric" value="${esc(thaiDateText(s.birth_date))}" placeholder="วว/ดด/ปปปป" maxlength="10" style="width:120px" aria-label="วันเกิด ${esc(s.name)} (วว/ดด/ปปปป พ.ศ.)"></td>
       <td><select data-f="room" style="width:96px" aria-label="ห้อง">${roomOpts(rosterRoom)}</select></td></tr>`).join("")}</tbody></table></div>
     <datalist id="prefixList">${d.prefixes.map((p) => `<option value="${esc(p)}">`).join("")}</datalist></div>`;
   for (const b of view.querySelectorAll("[data-rr]")) b.onclick = () => { rosterRoom = b.dataset.rr; sessionStorage.setItem("sr-admin-roster", rosterRoom); render(); };
@@ -570,6 +570,9 @@ async function renderStudents() {
     finally { el.disabled = false; }
   });
 }
+
+// วันเกิดแสดงแบบไทย วว/ดด/ปปปป (พ.ศ.) — ช่องวันที่ของเบราว์เซอร์แสดงตามภาษาเครื่อง (เช่น 06/15/2017 บน iPhone ภาษาอังกฤษ)
+const thaiDateText = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || ""); return m ? `${m[3]}/${m[2]}/${Number(m[1]) + 543}` : (iso || ""); };
 
 // ---------- นักเรียนย้ายเข้า / ย้ายออก / ออกกลางคัน (soft delete) ----------
 const STATUS_TH = { enrolled: "กำลังเรียน", transferred: "ย้ายออก", withdrawn: "ออกกลางคัน", graduated: "จบการศึกษา" };
@@ -653,7 +656,7 @@ async function renderMoves() {
           <label>ชื่อ<input name="first_name" required maxlength="80"></label>
           <label>นามสกุล<input name="last_name" required maxlength="80"></label>
           <label>เลขประจำตัวประชาชน<input name="national_id" inputmode="numeric" maxlength="17"></label>
-          <label>วันเกิด<input type="date" name="birth_date"></label>
+          <label>วันเกิด (วว/ดด/ปปปป พ.ศ.)<input name="birth_date" inputmode="numeric" placeholder="31/05/2561" maxlength="10"></label>
           ${roomSel()}${termSel()}
           <label>วันที่ย้ายเข้า<input type="date" name="move_date"></label>
           <label>ย้ายมาจากโรงเรียน<input name="school" maxlength="200"></label>
@@ -1045,8 +1048,8 @@ async function renderApprove(mode = "approve") {
   </div>
   <div class="panel"><div class="panel-head"><h2>${R ? "ตรวจแล้ว / อนุมัติแล้ว" : "อนุมัติแล้ว"} <span class="tag ok">${done.length}</span></h2></div>
     <p class="muted small">${R ? "รายวิชาที่ตรวจแล้วรอผู้บริหารอนุมัติ หรืออนุมัติแล้ว ถ้าฝ่ายวัดผลแก้คะแนนหลังอนุมัติ รายวิชาจะกลับมารอผู้บริหารอนุมัติใหม่ · ส่งคืนให้ครูแก้เองได้ทุกสถานะ" : "ถ้าฝ่ายวัดผลแก้ผลหลังอนุมัติ รายวิชาจะกลับมาขึ้นในรายการรออนุมัติอีกครั้ง"}</p>
-    ${R && done.length ? `<div class="table-wrap"><table class="list"><thead><tr><th>ห้อง</th><th>รหัส</th><th>วิชา</th><th>สถานะ</th><th></th></tr></thead><tbody>${done.map((c) => `<tr>
-      <td>${esc(c.grade_level)}/${esc(c.classroom)}</td><td>${esc(c.code)}</td><td><a href="/course.html?id=${c.id}&year=${Y}">${esc(c.name)}</a></td><td>${statusTag(c)}</td>
+    ${done.length ? `<div class="table-wrap"><table class="list"><thead><tr><th>ห้อง</th><th>รหัส</th><th>วิชา</th><th>สถานะ</th>${R ? "" : "<th>อนุมัติเมื่อ</th>"}<th></th></tr></thead><tbody>${done.map((c) => `<tr>
+      <td>${esc(c.grade_level)}/${esc(c.classroom)}</td><td>${esc(c.code)}</td><td><a href="/course.html?id=${c.id}&year=${Y}">${esc(c.name)}</a></td><td>${statusTag(c)}</td>${R ? "" : `<td class="small muted nowrap">${esc(thaiTime(c.approved_at))}</td>`}
       <td class="actions"><a class="btn small" target="_blank" rel="noopener" href="/print/pp5.html?course=${c.id}">ปพ.5</a><button class="btn small" data-return="${c.id}">ส่งคืน</button></td></tr>`).join("")}</tbody></table></div>` : ""}</div>`;
   for (const b of view.querySelectorAll("[data-return]")) b.onclick = async () => {
     const r = await dialog({ title: "ส่งคืนให้ครูแก้", okText: "ส่งคืน", okClass: "danger",
@@ -1115,19 +1118,59 @@ async function renderRequests() {
 
 // ---------- ประวัติการใช้งาน ----------
 const ACTION_TEXT = {
-  "course.submit": "ส่งผลการเรียน", "edit_request.course": "ขอแก้ไขรายวิชา", "edit_request.homeroom": "ขอแก้ไขข้อมูลประจำชั้น",
-  "edit_request.approve": "อนุมัติคำขอแก้ไข", "edit_request.reject": "ไม่อนุมัติคำขอแก้ไข", "edit_request.close": "ปิดสิทธิ์แก้", "course.return": "ส่งคืนให้ครูแก้", "course.reopen_approved": "ส่งคืนหลังอนุมัติ", "course.approve": "อนุมัติผล",
-  "settings.update": "แก้เกณฑ์/ผู้ลงนาม", "pilot.set": "ตั้งห้องที่เปิดใช้", "import.subjects": "นำเข้ารายวิชา", "import.teachers": "นำเข้าครูผู้สอน",
-  "import.homerooms": "นำเข้าครูประจำชั้น", "template.save": "บันทึกแม่แบบ", "template.apply": "ใช้แม่แบบ", "scores.remedial": "บันทึกคะแนนแก้ตัว",
-  "results.update": "แก้เวลาเรียน/ผลพิเศษ", "items.add": "เพิ่มช่องคะแนน", "item.update": "แก้ช่องคะแนน", "item.delete": "ลบช่องคะแนน",
-  "staff_role": "ให้/ถอนสิทธิ์ทีมวัดผล", "subject.create": "เพิ่มรายวิชา", "subject.update": "แก้รายวิชา", "subject.delete": "ลบรายวิชา",
+  "course.submit": "ส่งผลการเรียน", "course.review": "ฝ่ายวัดผลตรวจผล", "course.approve": "อนุมัติผล", "course.return": "ส่งคืนให้ครูแก้", "course.reopen_approved": "ส่งคืนหลังอนุมัติ",
+  "course.lock": "ล็อกรายวิชา", "course.delete": "ลบรายวิชาของห้อง", "course.admin_edit": "ฝ่ายวัดผลแก้คะแนน", "course.teachers": "กำหนดครูผู้สอน",
+  "courses.assign": "มอบหมายครูผู้สอน", "courses.generate": "สร้างรายวิชาของห้อง",
+  "edit_request.course": "ขอแก้ไขรายวิชา", "edit_request.homeroom": "ขอแก้ไขข้อมูลประจำชั้น", "edit_request.approve": "อนุมัติคำขอแก้ไข",
+  "edit_request.reject": "ไม่อนุมัติคำขอแก้ไข", "edit_request.close": "ปิดสิทธิ์แก้",
+  "settings.update": "แก้เกณฑ์/ผู้ลงนาม", "pilot.set": "ตั้งห้องที่เปิดใช้", "system.branding": "เปลี่ยนตราโรงเรียน",
+  "import.subjects": "นำเข้ารายวิชา", "import.teachers": "นำเข้าครูผู้สอน", "import.homerooms": "นำเข้าครูประจำชั้น", "roster.import": "นำเข้ารายชื่อนักเรียน",
+  "roster.update": "แก้ข้อมูลนักเรียน", "roster.renumber": "เรียงเลขที่ใหม่", "student.in": "รับนักเรียนย้ายเข้า", "student.out": "นักเรียนย้ายออก/ออกกลางคัน",
+  "student.out.undo": "ยกเลิกการย้ายออก", "students.promote": "เลื่อนชั้นนักเรียน", "students.carry_term": "ยกรายชื่อไปภาคเรียนที่ 2", "carryover.update": "บันทึกคะแนนยกมา (ย้ายเข้า)",
+  "template.save": "บันทึกแม่แบบ", "template.apply": "ใช้แม่แบบ", "template.delete": "ลบแม่แบบ", "structure.save": "บันทึกโครงสร้างรายวิชา",
+  "unit.add": "เพิ่มหน่วยการเรียนรู้", "unit.update": "แก้หน่วยการเรียนรู้", "unit.delete": "ลบหน่วยการเรียนรู้",
+  "items.add": "เพิ่มช่องคะแนน", "items.copy": "คัดลอกช่องคะแนน", "item.update": "แก้ช่องคะแนน", "item.delete": "ลบช่องคะแนน",
+  "scores.remedial": "บันทึกคะแนนแก้ตัว", "results.update": "แก้เวลาเรียน/ผลพิเศษ/แก้ตัว", "kinder.scores": "บันทึกผลประเมินพัฒนาการ",
+  "activity.update": "บันทึกกิจกรรมพัฒนาผู้เรียน", "attendance.update": "บันทึกการมาเรียน", "logs.update": "บันทึกประจำวัน", "homeroom.set": "กำหนดครูประจำชั้น",
+  "subject.create": "เพิ่มรายวิชา", "subject.update": "แก้รายวิชา", "subject.delete": "ลบรายวิชา", "subjects.copy": "คัดลอกรายวิชาจากปีก่อน", "subjects.template": "สร้างรายวิชาพื้นฐาน",
+  "bank.import": "นำเข้าคลังตัวชี้วัด", "bank.delete_group": "ลบตัวชี้วัดทั้งกลุ่ม", "sar.update": "แก้ข้อมูล SAR",
+  "calendar.add": "เพิ่มวันหยุด", "calendar.delete": "ลบวันหยุด", "calendar.government": "เติมวันหยุดราชการ",
+  "year.create": "เพิ่มปีการศึกษา", "year.update": "แก้ปีการศึกษา", "year.activate": "ตั้งปีการศึกษาปัจจุบัน", "year.delete": "ลบปีการศึกษา", "backup.restore": "กู้คืนข้อมูล",
+  "staff_role": "ให้/ถอนสิทธิ์ทีมวัดผล", "setup.first_admin": "สร้างผู้ดูแลระบบคนแรก", "users.create": "เพิ่มบัญชีผู้ใช้", "users.update": "แก้บัญชีผู้ใช้", "users.delete": "ลบบัญชีผู้ใช้",
+  "users.import": "นำเข้าบัญชีครู", "users.register": "สมัครใช้งาน", "users.grant_teacher": "ให้สิทธิ์ครูอัตโนมัติ", "users.password_change": "เปลี่ยนรหัสผ่าน",
+  "users.password_reset": "ตั้งรหัสผ่านใหม่ให้ผู้ใช้", "sessions.revoke_others": "ออกจากระบบอุปกรณ์อื่น",
 };
+// รายละเอียดเป็นข้อความอ่านง่าย (ไม่แสดง JSON ดิบ)
+const DETAIL_KEY = {
+  course: "รายวิชา #", ids: "รายวิชา", approved: "อนุมัติ", reviewed: "ตรวจ", skipped: "ข้าม", add: "เพิ่ม", update: "แก้", skip: "ข้าม", rows: "แถว", count: "จำนวน",
+  changes: "รายการ", saved: "บันทึก", grade: "ชั้น", room: "ห้อง", term: "ภาค", no: "หน่วยที่", title: "ชื่อ", hours: "ชม.", task: "ภาระงาน",
+  blanks: "ช่องว่าง", decimals: "ทศนิยม", borderline: "ใกล้เกณฑ์", ms: "มส", reason: "เหตุผล", note: "หมายเหตุ", email: "บัญชี", role: "บทบาท",
+  name: "ชื่อ", full_name: "ชื่อ", code: "รหัส", grades: "ชั้น", date: "วันที่", status: "สถานะ", student: "นักเรียน", students: "นักเรียน", id: "#",
+};
+function auditDetail(raw) {
+  if (raw == null || raw === "" || raw === "null") return "";
+  let d;
+  try { d = JSON.parse(raw); } catch { return String(raw).slice(0, 200); }
+  if (d == null || typeof d !== "object") return String(d);
+  const parts = [];
+  for (const [k, v] of Object.entries(d)) {
+    if (v == null || v === "" || ["year", "year_id"].includes(k)) continue;
+    const label = DETAIL_KEY[k];
+    if (Array.isArray(v)) parts.push(`${label || k} ${v.length} รายการ`);
+    else if (typeof v === "object") { if (label) parts.push(`${label} ${Object.keys(v).length} รายการ`); }
+    else if (label) parts.push(label.endsWith("#") ? `${label}${v}` : `${label} ${v}`);
+  }
+  const n = Object.keys(d).length;
+  return parts.length ? parts.join(" · ") : n ? `แก้ ${n} ค่า` : "";
+}
+
 async function renderAudit() {
   const { entries } = await api("/api/admin/audit");
+  const rows = entries.map((e) => ({ ...e, what: ACTION_TEXT[e.action] || ACTION_TEXT[e.action.split(".")[0]] || e.action, detailText: auditDetail(e.detail) }));
   view.innerHTML = `<div class="panel"><div class="panel-head"><h2>200 รายการล่าสุด</h2><input type="search" id="auditQ" placeholder="ค้นหาชื่อหรือการกระทำ" style="max-width:260px"></div>
-    <div class="table-wrap"><table class="list"><thead><tr><th>เวลา (UTC)</th><th>ผู้ใช้</th><th>การกระทำ</th><th>รายละเอียด</th></tr></thead>
-    <tbody>${entries.map((e) => `<tr data-q="${esc(`${e.full_name || ""} ${ACTION_TEXT[e.action] || e.action}`)}"><td class="small nowrap">${esc(e.created_at)}</td><td>${esc(e.full_name || "–")}</td>
-      <td>${esc(ACTION_TEXT[e.action] || e.action)}</td><td class="small muted" style="max-width:420px;word-break:break-word">${esc(String(e.detail || "").slice(0, 220))}</td></tr>`).join("")}</tbody></table></div></div>`;
+    <div class="table-wrap"><table class="list"><thead><tr><th>เวลา</th><th>ผู้ใช้</th><th>การกระทำ</th><th>รายละเอียด</th></tr></thead>
+    <tbody>${rows.map((e) => `<tr data-q="${esc(`${e.full_name || ""} ${e.what} ${e.detailText}`)}"><td class="small nowrap">${esc(thaiTime(e.created_at))}</td><td style="min-width:110px">${esc(e.full_name || "–")}</td>
+      <td style="min-width:120px">${esc(e.what)}</td><td class="small muted" style="max-width:420px;word-break:break-word">${esc(e.detailText)}</td></tr>`).join("")}</tbody></table></div></div>`;
   const q = document.getElementById("auditQ");
   q.oninput = () => { for (const tr of view.querySelectorAll("tbody tr")) tr.hidden = !tr.dataset.q.includes(q.value.trim()); };
 }
