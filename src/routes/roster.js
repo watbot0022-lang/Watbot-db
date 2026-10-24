@@ -173,13 +173,13 @@ export async function handleRoster(request, env, user, parts, method, url) {
       if (nid) seenNid.set(nid, i + 1);
       if (bd === null) { err("วันเกิดไม่ถูกต้อง (ใช้ 31/05/2561 หรือ 2018-05-31)"); continue; }
       // ห้องใหม่สร้างได้จากไฟล์ (โรงเรียนไม่มีระบบทะเบียนแยก) ถ้าเขียนถูกรูปแบบ อ.1–3 / ป.1–6
-      if (roomKey && !rooms.has(roomKey) && !validRoom(roomKey)) { err(`ห้อง "${text(raw.room, 20)}" ไม่ถูกต้อง (ใช้แบบ ป.1/1 หรือ อ.2/1)`); continue; }
+      if (roomKey && !rooms.has(roomKey) && !validRoom(roomKey)) { err(`ชั้นเรียน "${text(raw.room, 20)}" ไม่ถูกต้อง (ใช้แบบ ป.1/1 หรือ อ.2/1)`); continue; }
       const existing = await env.DB.prepare("SELECT id, status FROM students WHERE student_code = ?").bind(code).first();
       if (nid) {
         const other = await env.DB.prepare("SELECT student_code FROM students WHERE national_id = ? AND student_code <> ?").bind(nid, code).first();
         if (other) { err(`เลขประจำตัวประชาชนเป็นของนักเรียนเลขประจำตัว ${other.student_code} — ใช้เลขประจำตัวเดิม`); continue; }
       }
-      if (!existing && !roomKey) { err("นักเรียนใหม่ต้องระบุห้อง"); continue; }
+      if (!existing && !roomKey) { err("นักเรียนใหม่ต้องระบุชั้นเรียน (เช่น ป.1/1)"); continue; }
       const extra = {};
       for (const f of EXTRA_FIELDS) if (raw[f] != null && String(raw[f]).trim() !== "") extra[f] = text(raw[f], 200);
       plan.push({ code, first, last, prefix, nid, bd, g, roomKey, existing, extra });
