@@ -9,7 +9,7 @@
 <body>
 <div id="doc"><div class="status">กำลังเตรียมเอกสาร…</div></div>
 <script type="module">
-import { esc, params, get, toolbar, status, fmt, td, gradeOut, GRADE_TEXT } from "/print/print.js";
+import { esc, params, get, toolbar, status, fmt, td, gradeOut, GRADE_TEXT, fixed } from "/print/print.js";
 import { ASSESSMENT_GROUPS, summarizeGroup, summaryText, activityResult } from "/js/grading.js";
 
 const p = params();
@@ -60,7 +60,7 @@ function page(st) {
       <tbody>
         ${basic.length ? `<tr><td colspan="6"><b>รายวิชาพื้นฐาน</b></td></tr>${basic.map(row).join("")}` : ""}
         ${add.length ? `<tr><td colspan="6"><b>รายวิชาเพิ่มเติม</b></td></tr>${add.map(row).join("")}` : ""}
-        <tr><td colspan="2" class="r"><b>รวมเวลาเรียน / ผลการเรียนเฉลี่ย</b></td><td class="c">${td(hours)}</td><td></td><td class="c"><b>${st.gpa == null ? "" : fmt(st.gpa)}</b></td><td></td></tr>
+        <tr><td colspan="2" class="r"><b>รวมเวลาเรียน / ผลการเรียนเฉลี่ย</b></td><td class="c">${td(hours)}</td><td></td><td class="c"><b>${st.gpa == null ? "" : fixed(st.gpa, 2)}</b></td><td></td></tr>
       </tbody>
     </table>
     <table class="t tiny" style="font-size:14pt">
