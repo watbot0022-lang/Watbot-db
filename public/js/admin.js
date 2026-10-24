@@ -133,7 +133,7 @@ document.addEventListener("click", (e) => { const a = e.target.closest?.("[data-
 async function renderImport() {
   if (!IMPORT_ORDER.includes(importKind)) importKind = "users";
   const DESC = {
-    users: "บัญชีเข้าใช้ระบบของครูและบุคลากร", students: "รายชื่อ ห้อง และข้อมูลนักเรียน", subjects: "รายวิชาของแต่ละชั้น",
+    users: "บัญชีเข้าใช้ระบบของครูและบุคลากร", students: "รายชื่อ ชั้นเรียน และข้อมูลนักเรียน", subjects: "รายวิชาของแต่ละชั้น",
     teachers: "จับคู่ครูกับรายวิชาในแต่ละห้อง", homerooms: "ครูประจำชั้นของแต่ละห้อง",
   };
   view.innerHTML = `<div class="actions" style="margin-bottom:6px;flex-wrap:wrap">${IMPORT_ORDER.map((k) => `<button type="button" class="btn small ${k === importKind ? "primary" : ""}" data-kind="${k}">${esc(IMPORT_KINDS[k].title)}</button>`).join("")}</div>
@@ -217,7 +217,7 @@ function importCard(host, kind, { onDone } = {}) {
       save.disabled = true; save.textContent = "กำลังบันทึก…";
       try {
         const res = await send(rows, false); toast(`นำเข้า${spec.title}แล้ว`); teachersCache = null; box.value = ""; info.textContent = "";
-        out.innerHTML = `<p class="note">บันทึกแล้ว ${rows.length} แถว${res.summary.skip ? ` (ข้ามที่มีอยู่แล้ว ${res.summary.skip})` : ""}${res.appended ? ` · เปิดภาคเรียนแล้ว นักเรียนที่เพิ่ม/ย้ายเข้าห้อง ${res.appended} คนได้เลขที่ต่อท้ายห้อง (เลขที่ของคนเดิมไม่เลื่อน — แก้เลขที่ได้ที่เมนูนักเรียน)` : ""}</p>`;
+        out.innerHTML = `<p class="note">บันทึกแล้ว ${rows.length} แถว${res.summary.skip ? ` (ข้ามที่มีอยู่แล้ว ${res.summary.skip})` : ""}${res.appended ? ` · เปิดภาคเรียนแล้ว นักเรียนที่เพิ่ม/ย้ายชั้นเรียน ${res.appended} คนได้เลขที่ต่อท้ายชั้นเรียน (เลขที่ของคนเดิมไม่เลื่อน — แก้เลขที่ได้ที่เมนูนักเรียน)` : ""}</p>`;
         if (res.created.length) showCreated(out, res.created);
         onDone?.();
       } catch (err) { save.disabled = false; save.textContent = `บันทึก ${rows.length} แถว`; showError(err); }
