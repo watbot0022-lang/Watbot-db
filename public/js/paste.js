@@ -38,12 +38,12 @@ export const IMPORT_KINDS = {
     endpoint: "/api/roster/import",
     columns: [
       { key: "student_code", label: "เลขประจำตัว", aliases: ["เลขประจำตัว", "เลขประจำตัวนักเรียน", "รหัสนักเรียน", "รหัส"] },
-      { key: "name_prefix", label: "คำนำหน้า", aliases: ["คำนำหน้า", "คำนำหน้าชื่อ"], optional: true },
+      { key: "name_prefix", label: "คำนำหน้า", aliases: ["คำนำหน้า", "คำนำหน้าชื่อ"], keywords: ["คำนำหน้า"], optional: true },
       { key: "first_name", label: "ชื่อ", aliases: ["ชื่อ"] },
       { key: "last_name", label: "นามสกุล", aliases: ["นามสกุล", "สกุล"] },
-      { key: "gender", label: "เพศ", aliases: ["เพศ"], optional: true },
-      { key: "national_id", label: "เลขประจำตัวประชาชน", aliases: ["เลขประจำตัวประชาชน", "เลขบัตรประชาชน"], optional: true },
-      { key: "birth_date", label: "วันเกิด (วว/ดด/ปปปป)", aliases: ["วันเกิด", "วันเกิด (วว/ดด/ปปปป)", "วันเกิด (ค.ศ.)", "วันเดือนปีเกิด"], optional: true },
+      { key: "gender", label: "เพศ", aliases: ["เพศ"], keywords: ["เพศ"], optional: true },
+      { key: "national_id", label: "เลขประจำตัวประชาชน", aliases: ["เลขประจำตัวประชาชน", "เลขบัตรประชาชน", "เลขบัตรประจำตัวประชาชน", "รหัสประจำตัวประชาชน", "เลขที่บัตรประชาชน", "บัตรประชาชน", "เลขประชาชน"], keywords: ["ประชาชน", "บัตร"], value: /^\d[\d\s-]{11,20}$/, optional: true },
+      { key: "birth_date", label: "วันเกิด (วว/ดด/ปปปป)", aliases: ["วันเกิด", "วันเกิด (วว/ดด/ปปปป)", "วันเกิด (ค.ศ.)", "วันเดือนปีเกิด"], keywords: ["เกิด"], optional: true },
       { key: "room", label: "ชั้นเรียน", aliases: ["ชั้นเรียน", "ชั้น", "ระดับชั้น", "ห้อง", "ชั้น/ห้อง", "ห้องเรียน"], optional: true },
     ],
     note: "ชั้นเรียนเขียนแบบ ป.1/1 หรือ อ.2/1 · เลขประจำตัวที่มีอยู่แล้ว = ปรับข้อมูลและย้ายชั้นเรียนตามไฟล์ (นักเรียนที่เคยย้ายออกจะกลับเข้าเรียน ใช้ข้อมูลเดิม) · เลขใหม่ = เพิ่มนักเรียน ต้องระบุชั้นเรียน · วันเกิดแบบ 2018-05-31 หรือ 31/05/2561 · ห้ามเลขประจำตัวประชาชนซ้ำกับนักเรียนคนอื่น · คอลัมน์ข้อมูลผู้ปกครอง/ที่อยู่เว้นว่างได้ (ช่องว่าง = ไม่แก้ของเดิม)",
@@ -115,7 +115,7 @@ const norm = (s) => String(s ?? "").replace(/\s+/g, "").toLowerCase();
 // แปลงตาราง → แถวข้อมูล: ถ้าแถวแรกเป็นหัวตาราง จับคอลัมน์ตามชื่อหัว ไม่เช่นนั้นใช้ลำดับคอลัมน์ตามแม่แบบ
 export function gridToRows(kind, grid) {
   const spec = IMPORT_KINDS[kind];
-  if (!spec || !grid.length) return { rows: [], header: false };
+  if (!spec || !grid.length) return { rows: [], header: false, ignored: [] };
   const head = grid[0].map(norm);
   const index = {};
   for (const col of spec.columns) {
@@ -133,19 +133,33 @@ export function gridToRows(kind, grid) {
     const cols = width >= spec.columns.length ? spec.columns : width >= base.length ? base : required;
     cols.forEach((c, i) => { index[c.key] = i; });
   }
-  // หัวคอลัมน์ชั้นเรียนสะกดไม่ตรงแม่แบบ → หาคอลัมน์ที่ค่าเป็นชั้นเรียน (เช่น ป.1/1, อ.3/1) แทน
-  if (header && !("room" in index) && spec.columns.some((c) => c.key === "room")) {
-    const used = new Set(Object.values(index));
-    const ROOM = /^(ป|อ)\.?\s*\d\s*\/\s*\d{1,2}$/;
-    const width = Math.max(...body.map((r) => r.length), 0);
-    for (let c = 0; c < width && !("room" in index); c++) {
-      if (used.has(c)) continue;
-      const vals = body.map((r) => r[c] ?? "").filter((v) => v !== "");
-      if (vals.length && vals.filter((v) => ROOM.test(v)).length / vals.length >= 0.8) index.room = c;
+  if (header) {
+    // 1) หัวคอลัมน์สะกดไม่ตรงชื่อที่รู้จัก → จับด้วยคำสำคัญ (เช่น "เลขบัตรประจำตัวประชาชน 13 หลัก" มีคำว่า "ประชาชน")
+    for (const col of spec.columns) {
+      if (col.key in index || !col.keywords) continue;
+      const used = new Set(Object.values(index));
+      const at = head.findIndex((h, i) => !used.has(i) && col.keywords.some((k) => h.includes(norm(k))));
+      if (at >= 0) index[col.key] = at;
     }
+    // 2) ยังไม่เจอ → ดูจากค่าในคอลัมน์ (ชั้นเรียน ป.1/1 · เลขประจำตัวประชาชน 13 หลัก)
+    const width = Math.max(...body.map((r) => r.length), 0);
+    const byValue = (key, test) => {
+      if (key in index || !spec.columns.some((c) => c.key === key)) return;
+      const used = new Set(Object.values(index));
+      for (let c = 0; c < width; c++) {
+        if (used.has(c)) continue;
+        const vals = body.map((r) => r[c] ?? "").filter((v) => v !== "");
+        if (vals.length && vals.filter(test).length / vals.length >= 0.8) { index[key] = c; return; }
+      }
+    };
+    byValue("room", (v) => /^(ป|อ)\.?\s*\d\s*\/\s*\d{1,2}$/.test(v));
+    byValue("national_id", (v) => v.replace(/\D/g, "").length === 13 && /^[\d\s-]+$/.test(v));
   }
   const rows = body.map((r) => Object.fromEntries(spec.columns.filter((c) => c.key in index).map((c) => [c.key, r[index[c.key]] ?? ""])));
-  return { rows, header };
+  // หัวคอลัมน์ในไฟล์ที่ระบบไม่รู้จัก → แจ้งผู้ใช้ (ไม่ทิ้งข้อมูลเงียบ ๆ)
+  const usedCols = new Set(Object.values(index));
+  const ignored = header ? grid[0].map((h, i) => (usedCols.has(i) || !String(h).trim() ? null : String(h).trim())).filter(Boolean) : [];
+  return { rows, header, ignored };
 }
 
 export function templateRows(kind) {
