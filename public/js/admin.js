@@ -161,7 +161,11 @@ function importCard(host, kind, { onDone } = {}) {
   const $ = (sel) => host.querySelector(sel);
   const box = $("[data-paste]"), info = $("[data-info]"), out = $("[data-result]");
   const current = () => gridToRows(kind, parseGrid(box.value));
-  box.oninput = () => { const { rows, header } = current(); info.textContent = rows.length ? `${rows.length} แถว${header ? " (พบแถวหัวตาราง)" : ""}` : ""; out.innerHTML = ""; };
+  box.oninput = () => {
+    const { rows, header, ignored } = current();
+    info.innerHTML = rows.length ? `${rows.length} แถว${header ? " (พบแถวหัวตาราง)" : ""}${ignored?.length ? ` · <span style="color:var(--bad)">คอลัมน์ที่ระบบไม่รู้จัก ไม่ได้นำเข้า: ${ignored.map(esc).join(", ")}</span>` : ""}` : "";
+    out.innerHTML = "";
+  };
   $("[data-file]").onchange = async (e) => {
     const f = e.target.files[0]; if (!f) return;
     try {
@@ -196,7 +200,7 @@ function importCard(host, kind, { onDone } = {}) {
     return merged;
   };
   $("[data-check]").onclick = async () => {
-    const { rows } = current();
+    const { rows, ignored } = current();
     if (!rows.length) { toast("ยังไม่มีข้อมูล — วางตารางจาก Excel หรือเลือกไฟล์ก่อน", "bad"); return; }
     let r;
     out.innerHTML = `<p class="muted small">กำลังตรวจ…</p>`;
@@ -205,7 +209,8 @@ function importCard(host, kind, { onDone } = {}) {
     const errAt = Object.fromEntries(r.errors.map((e) => [e.row, e.error]));
     const sm = r.summary;
     const shown = rows.length > 500 && !r.errors.length ? rows.slice(0, 200) : rows;
-    out.innerHTML = `${r.errors.length ? `<p class="note bad">พบข้อผิดพลาด ${r.errors.length} แถว — แก้ในไฟล์แล้ววางใหม่ (ยังไม่บันทึกอะไร)<br><span class="small">${r.errors.slice(0, 3).map((e) => `แถว ${e.row}: ${esc(e.error)}`).join("<br>")}${r.errors.length > 3 ? `<br>… และอีก ${r.errors.length - 3} แถว (ดูช่อง "ผลตรวจ")` : ""}</span></p>`
+    const ignoredNote = ignored?.length ? `<p class="note warn">คอลัมน์ในไฟล์ที่ระบบไม่รู้จัก จะ<b>ไม่ถูกนำเข้า</b>: ${ignored.map(esc).join(", ")} — ถ้าเป็นข้อมูลที่ต้องการ ให้เปลี่ยนหัวคอลัมน์ตามแม่แบบ (ดาวน์โหลดแม่แบบดูชื่อที่ถูกต้อง)</p>` : "";
+    out.innerHTML = `${ignoredNote}${r.errors.length ? `<p class="note bad">พบข้อผิดพลาด ${r.errors.length} แถว — แก้ในไฟล์แล้ววางใหม่ (ยังไม่บันทึกอะไร)<br><span class="small">${r.errors.slice(0, 3).map((e) => `แถว ${e.row}: ${esc(e.error)}`).join("<br>")}${r.errors.length > 3 ? `<br>… และอีก ${r.errors.length - 3} แถว (ดูช่อง "ผลตรวจ")` : ""}</span></p>`
         : `<p class="note">ข้อมูลถูกต้อง ${rows.length} แถว · เพิ่มใหม่ ${sm.add}${sm.update ? ` · แก้ของเดิม ${sm.update}` : ""}${sm.skip ? ` · มีอยู่แล้ว (ข้าม) ${sm.skip}` : ""}</p>`}
       <div class="table-wrap" style="max-height:420px;margin-top:10px"><table class="list"><thead><tr><th>แถว</th><th>ผลตรวจ</th>${cols.map((c) => `<th>${c.label}</th>`).join("")}</tr></thead>
       <tbody>${shown.map((x, i) => `<tr${errAt[i + 1] ? ' style="background:var(--bad-bg)"' : ""}><td class="num">${i + 1}</td>
