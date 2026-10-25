@@ -5,13 +5,13 @@ const require = createRequire("/opt/npm-tools/node_modules/");
 const { chromium } = require("playwright-core");
 const BASE = "http://localhost:8787", OUT = process.argv[2] || "/tmp";
 const errors = [];
-const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome" });
+const browser = await chromium.launch(process.env.CHROME ? { executablePath: process.env.CHROME } : {});
 async function login(email, viewport = { width: 1366, height: 900 }) {
   const p = await (await browser.newContext({ viewport, locale: "th-TH" })).newPage();
   p.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
   p.on("dialog", (d) => d.accept());
   await p.goto(`${BASE}/login.html`);
-  await p.fill("input[name=email]", email); await p.fill("input[name=password]", "test-password-1"); await p.click("#go");
+  await p.fill("#loginForm input[name=email]", email); await p.fill("#loginForm input[name=password]", "test-password-1"); await p.click("#loginForm button.primary");
   await p.waitForURL((u) => !u.pathname.startsWith("/login"));
   await p.waitForSelector("#main:not([hidden])");
   return p;
@@ -87,17 +87,17 @@ if (d.comments[st[2].id]?.[2]?.learn !== "ตั้งใจเรียน ส�
 if (st.some((x) => d.comments[x.id]?.[2]?.health !== "สุขภาพแข็งแรง")) errors.push("ใช้กับทั้งห้องไม่ครบ");
 await t.screenshot({ path: `${OUT}/h3-comments.png` });
 
-// น้ำหนักส่วนสูง
+// น้ำหนักส่วนสูง (ภาคเรียนที่ 2 = ครั้งที่ 3–4)
 await t.click('#tabs button[data-tab="body"]');
 await t.waitForSelector("#sheet");
 const row = t.locator("#sheet tbody tr").first();
-await row.locator('input[data-r="1"][data-f="weight"]').fill("32.5");
-await row.locator('input[data-r="1"][data-f="height"]').fill("135");
+await row.locator('input[data-r="3"][data-f="weight"]').fill("32.5");
+await row.locator('input[data-r="3"][data-f="height"]').fill("135");
 await saved(t);
 const bmi = await row.locator("[data-bmi]").innerText();
 if (!bmi.includes("สมส่วน")) errors.push(`ภาวะโภชนาการควรเป็น สมส่วน ได้ ${bmi}`);
 d = await api(t, `/api/homeroom?${Q}`);
-if (d.body[st[0].id]?.[1]?.weight !== 32.5) errors.push("น้ำหนักไม่ถูกบันทึก");
+if (d.body[st[0].id]?.[3]?.weight !== 32.5) errors.push("น้ำหนักไม่ถูกบันทึก");
 await t.screenshot({ path: `${OUT}/h4-body.png` });
 
 // อนุบาล: บันทึกการมาเรียน ประเมิน/สรุปพัฒนาการ ความคิดเห็นครู และน้ำหนักส่วนสูง

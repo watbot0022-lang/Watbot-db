@@ -41,6 +41,45 @@ export function withYear(path, yearId) {
   return u.pathname + u.search;
 }
 
+// ---------- ภาคเรียนที่เลือก (ทำงานทีละภาค: กรอก/พิมพ์ข้อมูลของภาคที่เลือกเท่านั้น) ----------
+// ลำดับ: ?term= ในลิงก์ → ภาคที่เลือกไว้ล่าสุด → ภาคปัจจุบันตามปฏิทิน (me.current_term) · ภาค 2 = สรุปทั้งปี (รวมภาค 1)
+export const TERM_LABEL = { 1: "ภาคเรียนที่ 1", 2: "ภาคเรียนที่ 2" };
+const validTerm = (t) => (Number(t) === 1 || Number(t) === 2 ? Number(t) : null);
+export function selectedTerm(me) {
+  const p = validTerm(params().get("term"));
+  if (p) return p;
+  try { const s = validTerm(localStorage.getItem("sr-term")); if (s) return s; } catch { /* */ }
+  return validTerm(me?.current_term) || 1;
+}
+export function rememberTerm(t) { try { localStorage.setItem("sr-term", String(t)); } catch { /* */ } }
+export function withTerm(path, t) {
+  const u = new URL(path, location.origin);
+  if (validTerm(t)) u.searchParams.set("term", t);
+  return u.pathname + u.search + u.hash;
+}
+// สลับภาค: จำไว้แล้วโหลดหน้าเดิมใหม่ด้วย ?term= ใหม่ (หน้าที่มีข้อมูลรอบันทึกจะถามก่อนออกเอง)
+export function switchTerm(t) {
+  rememberTerm(t);
+  const u = new URL(location.href);
+  u.searchParams.set("term", t);
+  location.href = u.toString();
+}
+// ช่วงวันที่ของภาค (จาก academic_terms) เช่น "1 พ.ค. – 10 ต.ค. 2569"
+export function termRange(me, t) {
+  const x = (me?.terms || []).find((r) => r.term_number === t);
+  if (!x) return "";
+  const d = (iso, y) => new Date(`${iso}T00:00:00Z`).toLocaleDateString("th-TH", { timeZone: "UTC", day: "numeric", month: "short", ...(y ? { year: "numeric" } : {}) });
+  return `${d(x.start_date)} – ${d(x.end_date, true)}`;
+}
+// เดือน (YYYY-MM) ที่อยู่ในช่วงภาคเรียน — ใช้กรองรายการเดือนของตารางรายเดือน
+export function monthsOfTerm(months, me, t) {
+  const x = (me?.terms || []).find((r) => r.term_number === t);
+  if (!x) return months;
+  const a = x.start_date.slice(0, 7), b = x.end_date.slice(0, 7);
+  const out = months.filter((m) => m >= a && m <= b);
+  return out.length ? out : months;
+}
+
 let toastZone;
 export function toast(message, kind = "") {
   toastZone ||= Object.assign(document.body.appendChild(document.createElement("div")), { className: "toast-zone", role: "status" });
@@ -216,6 +255,12 @@ export async function shell(active) {
   rememberYear(me.year.id);
   // รหัสผ่านเริ่มต้น (ผู้ดูแลตั้งให้/นำเข้า) → ต้องเปลี่ยนก่อนใช้งาน
   if (me.user.must_change && location.pathname !== "/account.html") { location.replace("/account.html?first=1"); return new Promise(() => {}); }
+  // หน้าที่ทำงานรายภาค: หน้าแรก รายวิชา ประจำชั้น กิจกรรม บันทึกประจำวัน คลังเอกสาร
+  const termPage = ["home", "activities", "logs", "docs"].includes(active);
+  me.term = selectedTerm(me);
+  rememberTerm(me.term);
+  // สีทั้งหน้าเปลี่ยนตามภาค (ภาค 1 #CDB4DB · ภาค 2 #FFAFCC) เฉพาะหน้าที่ทำงานรายภาค
+  if (termPage) document.documentElement.dataset.term = String(me.term);
   const roles = availableRoles(me.user);
   let role;
   try { role = localStorage.getItem("sr-role"); } catch { /* */ }
@@ -238,7 +283,12 @@ export async function shell(active) {
   const side = document.createElement("aside");
   side.className = "sidebar";
   side.id = "sidebar";
+  // สวิตช์ภาคเรียน (ปิด = ภาค 1 · เปิด = ภาค 2) อยู่บนสุดของเมนู
+  const termToggle = (cls = "") => `<button type="button" class="term-toggle ${cls}" role="switch" aria-checked="${me.term === 2}"
+      aria-label="ภาคเรียน: ตอนนี้ภาคเรียนที่ ${me.term} — กดเพื่อสลับไปภาคเรียนที่ ${me.term === 1 ? 2 : 1}">
+      <span class="tt-label ${me.term === 1 ? "on" : ""}">ภาค 1</span><span class="tt-track" aria-hidden="true"><span class="tt-knob"></span></span><span class="tt-label ${me.term === 2 ? "on" : ""}">ภาค 2</span></button>`;
   side.innerHTML = `
+    ${termPage ? `<div class="term-top"><span class="term-top-title">ภาคเรียน</span>${termToggle()}</div>` : ""}
     <a class="brand" href="/"><img src="/logo.png" alt=""><div><strong>รายงานผลการเรียน</strong><span>${esc(me.settings.school_name || "โรงเรียนวัดโบสถ์ (ราษฎร์รังสฤษฏ์)")}</span></div></a>
     <div class="side-ctl">
       <label>บทบาท<select id="roleSel" ${roles.length < 2 ? "disabled" : ""}>${roles.map((r) => `<option value="${r}" ${r === role ? "selected" : ""}>${ROLES[r].label}</option>`).join("")}</select></label>
@@ -280,6 +330,24 @@ export async function shell(active) {
     location.href = u.pathname === "/course.html" ? "/" : u.toString();
   };
   side.querySelector("#logoutBtn").onclick = logout;
+  // กดสวิตช์: เลื่อนปุ่มให้เห็นก่อน แล้วโหลดหน้าเดิมในภาคเรียนใหม่
+  const flip = (el) => { el.setAttribute("aria-checked", String(me.term === 1)); el.classList.add("moving"); setTimeout(() => switchTerm(me.term === 1 ? 2 : 1), 180); };
+  if (termPage) {
+    // แถบสีบอกภาคเรียนที่กำลังทำงาน (สีเดียวกับการ์ดภาคเรียนในหน้าแรก)
+    document.body.classList.add("term-mode");
+    const band = document.createElement("div");
+    band.className = `term-band t${me.term}`;
+    band.id = "termBand";
+    const other = me.term === 1 ? 2 : 1;
+    band.innerHTML = `<span class="term-dot" aria-hidden="true"></span><span><b>${TERM_LABEL[me.term]}</b> ปีการศึกษา ${esc(me.year.year_be)}${termRange(me, me.term) ? ` <span class="term-dates">(${esc(termRange(me, me.term))})</span>` : ""}
+      <span class="term-note">${me.term === 1 ? "กรอกและพิมพ์ข้อมูลของภาคเรียนที่ 1" : "กรอกข้อมูลภาคเรียนที่ 2 · สรุปผลทั้งปี (รวมภาคเรียนที่ 1)"}</span></span>
+      <button type="button" class="btn small" data-term="${other}">ไป${TERM_LABEL[other]}</button>`;
+    band.querySelector("button").onclick = () => switchTerm(other);
+    const main = document.getElementById("main");
+    (main || document.body).prepend(band);
+    mbar.querySelector(".role-chip").insertAdjacentHTML("beforebegin", termToggle("mini"));
+  }
+  for (const el of document.querySelectorAll(".term-toggle")) el.onclick = () => flip(el);
   return me;
 }
 

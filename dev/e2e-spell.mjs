@@ -9,12 +9,12 @@ const { chromium } = require("playwright-core");
 const BASE = "http://localhost:8787", OUT = process.argv[2] || "/tmp";
 const errors = [];
 const check = (cond, msg) => { if (!cond) errors.push(msg); };
-const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome" });
+const browser = await chromium.launch(process.env.CHROME ? { executablePath: process.env.CHROME } : {});
 async function login(email, viewport = { width: 1366, height: 900 }) {
   const p = await (await browser.newContext({ viewport, locale: "th-TH" })).newPage();
   p.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
   await p.goto(`${BASE}/login.html`);
-  await p.fill("input[name=email]", email); await p.fill("input[name=password]", "test-password-1"); await p.click("#go");
+  await p.fill("#loginForm input[name=email]", email); await p.fill("#loginForm input[name=password]", "test-password-1"); await p.click("#loginForm button.primary");
   await p.waitForURL((u) => !u.pathname.startsWith("/login"));
   await p.waitForSelector("#main:not([hidden])");
   return p;

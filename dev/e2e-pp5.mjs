@@ -6,14 +6,14 @@ const { chromium } = require("playwright-core");
 const BASE = "http://localhost:8787";
 const OUT = process.argv[2] || "/tmp";
 const errors = [];
-const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome" });
+const browser = await chromium.launch(process.env.CHROME ? { executablePath: process.env.CHROME } : {});
 const page = await (await browser.newContext({ viewport: { width: 1300, height: 900 }, locale: "th-TH" })).newPage();
 page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
 page.on("console", (m) => { if (m.type() === "error" && !/fonts\.googleapis|cdnjs|ERR_|Failed to load resource/.test(m.text())) errors.push(`console: ${m.text()}`); });
 await page.goto(`${BASE}/login.html`);
-await page.fill("input[name=email]", "admin@test.local");
-await page.fill("input[name=password]", "test-password-1");
-await page.click("#go");
+await page.fill("#loginForm input[name=email]", "admin@test.local");
+await page.fill("#loginForm input[name=password]", "test-password-1");
+await page.click("#loginForm button.primary");
 await page.waitForURL((u) => !u.pathname.startsWith("/login"));
 await page.waitForSelector("#main:not([hidden])");
 const api = (path, method = "GET", body) => page.evaluate(async ([path, method, body]) => {
