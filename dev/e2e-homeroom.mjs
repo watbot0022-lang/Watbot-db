@@ -11,7 +11,7 @@ async function login(email, viewport = { width: 1366, height: 900 }) {
   p.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
   p.on("dialog", (d) => d.accept());
   await p.goto(`${BASE}/login.html`);
-  await p.fill("input[name=email]", email); await p.fill("input[name=password]", "test-password-1"); await p.click("#go");
+  await p.fill("#loginForm input[name=email]", email); await p.fill("#loginForm input[name=password]", "test-password-1"); await p.click("#loginForm button.primary");
   await p.waitForURL((u) => !u.pathname.startsWith("/login"));
   await p.waitForSelector("#main:not([hidden])");
   return p;

@@ -15,9 +15,9 @@ async function login(email) {
   page.on("pageerror", (e) => { if (!/^(term 1|no rooms|empty)$/.test(e.message)) errors.push(`pageerror ${email} ${page.url()}: ${e.message}`); });
   page.on("console", (m) => { if (m.type() === "error" && !/fonts\.googleapis|cdnjs|ERR_|Failed to load resource/.test(m.text())) errors.push(`console ${email}: ${m.text()}`); });
   await page.goto(`${BASE}/login.html`);
-  await page.fill("input[name=email]", email);
-  await page.fill("input[name=password]", "test-password-1");
-  await page.click("#go");
+  await page.fill("#loginForm input[name=email]", email);
+  await page.fill("#loginForm input[name=password]", "test-password-1");
+  await page.click("#loginForm button.primary");
   await page.waitForURL((u) => !u.pathname.startsWith("/login"));
   await page.waitForSelector("#main:not([hidden])");
   return page;

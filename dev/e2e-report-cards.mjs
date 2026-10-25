@@ -14,9 +14,9 @@ const page = await ctx.newPage();
 page.on("pageerror", (e) => fails.push(`pageerror: ${e.message}`));
 async function login(email) {
   await page.goto(`${BASE}/login.html`);
-  await page.fill("input[name=email]", email);
-  await page.fill("input[name=password]", "test-password-1");
-  await page.click("#go");
+  await page.fill("#loginForm input[name=email]", email);
+  await page.fill("#loginForm input[name=password]", "test-password-1");
+  await page.click("#loginForm button.primary");
   await page.waitForURL((u) => !u.pathname.startsWith("/login"));
   await page.waitForLoadState("networkidle");
   await page.goto(`${BASE}/print/print.css`); // หน้านิ่งไม่มีสคริปต์ — ใช้ยิง API โดยไม่ถูกเปลี่ยนหน้ากลางทาง

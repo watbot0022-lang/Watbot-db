@@ -11,9 +11,9 @@ const page = await (await browser.newContext({ viewport: { width: 1300, height: 
 page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
 page.on("console", (m) => { if (m.type() === "error" && !/fonts\.googleapis|cdnjs|ERR_|Failed to load resource/.test(m.text())) errors.push(`console: ${m.text()}`); });
 await page.goto(`${BASE}/login.html`);
-await page.fill("input[name=email]", "admin@test.local");
-await page.fill("input[name=password]", "test-password-1");
-await page.click("#go");
+await page.fill("#loginForm input[name=email]", "admin@test.local");
+await page.fill("#loginForm input[name=password]", "test-password-1");
+await page.click("#loginForm button.primary");
 await page.waitForURL((u) => !u.pathname.startsWith("/login"));
 await page.waitForSelector("#main:not([hidden])");
 const api = (path, method = "GET", body) => page.evaluate(async ([path, method, body]) => {

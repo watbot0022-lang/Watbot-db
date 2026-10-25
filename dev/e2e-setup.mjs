@@ -19,9 +19,9 @@ const text = (p, s) => p.waitForFunction((t) => document.body.innerText.includes
 
 const p = await newPage({ width: 1366, height: 900 });
 await p.goto(`${BASE}/login.html`);
-await p.fill("input[name=email]", "admin@test.local");
-await p.fill("input[name=password]", "test-password-1");
-await p.click("#go");
+await p.fill("#loginForm input[name=email]", "admin@test.local");
+await p.fill("#loginForm input[name=password]", "test-password-1");
+await p.click("#loginForm button.primary");
 await p.waitForURL((u) => !u.pathname.startsWith("/login"));
 await p.waitForSelector("#main:not([hidden])");
 await p.goto(`${BASE}/admin.html`);
