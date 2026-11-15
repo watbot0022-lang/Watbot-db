@@ -32,7 +32,7 @@ test("ตัดเกรดรายปี (ค่าเริ่มต้น): 
   assert.deepEqual(structureIssues(items, 70), []);
 });
 
-test("API: เปลี่ยนรูปแบบการตัดเกรดของรายวิชา แล้วผลคำนวณตามรูปแบบใหม่", async () => {
+test("API: ฝ่ายวัดผลกำหนดรูปแบบการตัดเกรดที่รายวิชา (ทุกห้อง) ครูเปลี่ยนเองไม่ได้", async () => {
   const { default: worker } = await import("../src/index.js");
   const { makeEnv } = await import("../dev/server.mjs");
   const { PASSWORD } = await import("../dev/seed.mjs");
@@ -46,13 +46,19 @@ test("API: เปลี่ยนรูปแบบการตัดเกรด
   await call("POST", "/api/admin/subjects/template", { grades: ["ป.4"] });
   await call("POST", "/api/admin/courses/generate", {});
   const { data: { courses } } = await call("GET", "/api/admin/courses");
-  const id = (courses.find((c) => !c.locked) || courses[0])?.id ?? courses[0]?.course_id;
-  assert.ok(id, JSON.stringify(courses.slice(0, 1)));
-  const before = await call("GET", `/api/courses/${id}`);
-  assert.equal(before.data.course.grading_mode, "year");
-  assert.equal((await call("PUT", `/api/courses/${id}/grading-mode`, { mode: "x" })).status, 400);
-  const after = await call("PUT", `/api/courses/${id}/grading-mode`, { mode: "term" });
-  assert.equal(after.status, 200);
-  assert.equal(after.data.course.grading_mode, "term");
+  const course = courses.find((c) => !c.locked) || courses[0];
+  assert.ok(course);
+  const id = course.id;
+  assert.equal((await call("GET", `/api/courses/${id}`)).data.course.grading_mode, "year");
+  // ครูเปลี่ยนเองไม่ได้แล้ว (ไม่มีช่องทางในรายวิชาของห้อง)
+  assert.notEqual((await call("PUT", `/api/courses/${id}/grading-mode`, { mode: "term" })).status, 200);
+  const { data: { subjects } } = await call("GET", "/api/admin/subjects");
+  const sub = subjects.find((x) => x.id === course.subject_id);
+  const body = { grade_level: sub.grade_level, code: sub.code, name: sub.name, learning_area: sub.learning_area, subject_type: sub.subject_type, hours_per_year: sub.hours_per_year, collect_ratio: sub.collect_ratio, sort_order: sub.sort_order };
+  assert.equal((await call("PUT", `/api/admin/subjects/${sub.id}`, { ...body, grading_mode: "x" })).status, 400);
+  assert.equal((await call("PUT", `/api/admin/subjects/${sub.id}`, { ...body, grading_mode: "term" })).status, 200);
+  assert.equal((await call("GET", `/api/courses/${id}`)).data.course.grading_mode, "term");
+  // แก้วิชาโดยไม่ส่ง grading_mode (เช่น เปลี่ยนสัดส่วน) = คงค่าเดิม
+  assert.equal((await call("PUT", `/api/admin/subjects/${sub.id}`, body)).status, 200);
   assert.equal((await call("GET", `/api/courses/${id}`)).data.course.grading_mode, "term");
 });

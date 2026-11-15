@@ -47,7 +47,10 @@ function cleanSubject(body, settings) {
   const rawSort = body.sort_order;
   const sort = rawSort === "" || rawSort == null ? null : Number(rawSort);
   if (sort != null && (!Number.isInteger(sort) || sort < 0 || sort > 9999)) fail(400, "ลำดับในรายงานต้องเป็นจำนวนเต็ม 0–9999");
-  return { grade, code, name, area, type, hours, ratio, sort };
+  // รูปแบบการตัดเกรด: ว่าง = คงค่าเดิม (วิชาใหม่ = รายปี)
+  const rawMode = text(body.grading_mode, 20);
+  const mode = !rawMode ? null : ["term", "รายภาค"].includes(rawMode) ? "term" : ["year", "รายปี"].includes(rawMode) ? "year" : fail(400, "รูปแบบการตัดเกรดต้องเป็นรายภาคหรือรายปี");
+  return { grade, code, name, area, type, hours, ratio, sort, mode };
 }
 
 export async function handleAdmin(request, env, user, parts, method, url) {
@@ -171,7 +174,7 @@ export async function handleAdmin(request, env, user, parts, method, url) {
         return s;
       }));
       const { results: existing } = await env.DB.prepare(
-        `SELECT s.grade_level, s.code, s.collect_ratio, s.hours_per_year,
+        `SELECT s.grade_level, s.code, s.collect_ratio, s.hours_per_year, s.grading_mode,
                 (SELECT COUNT(*) FROM gr_courses c WHERE c.subject_id = s.id AND c.locked = 1) AS locked
            FROM gr_subjects s WHERE s.academic_year_id = ?`
       ).bind(year.id).all();
@@ -180,9 +183,9 @@ export async function handleAdmin(request, env, user, parts, method, url) {
       const byKey = Object.fromEntries(existing.map((e) => [`${e.grade_level}|${e.code}`, e]));
       plan.forEach((s) => {
         const e = byKey[`${s.grade}|${s.code}`];
-        if (e && e.locked > 0 && (e.collect_ratio !== s.ratio || e.hours_per_year !== s.hours)) {
+        if (e && e.locked > 0 && (e.collect_ratio !== s.ratio || e.hours_per_year !== s.hours || (s.mode && s.mode !== e.grading_mode))) {
           errors.push({ row: rows.findIndex((r) => text(r.code, 20).replace(/\s+/g, "") === s.code && text(r.grade_level, 10) === s.grade) + 1,
-            error: `${s.code} ${s.grade}: เปลี่ยนสัดส่วนคะแนน/เวลาเรียนไม่ได้ เพราะมี ${e.locked} ห้องส่งผลแล้ว — ส่งคืนให้ครูก่อน` });
+            error: `${s.code} ${s.grade}: เปลี่ยนสัดส่วนคะแนน/เวลาเรียน/รูปแบบการตัดเกรดไม่ได้ เพราะมี ${e.locked} ห้องส่งผลแล้ว — ส่งคืนให้ครูก่อน` });
         }
       });
       // ลำดับในรายงาน: วิชาเดิมที่ไม่ได้ระบุลำดับ คงลำดับเดิม · วิชาใหม่ต่อท้ายวิชาของชั้นนั้นตามลำดับแถวในไฟล์
@@ -198,10 +201,11 @@ export async function handleAdmin(request, env, user, parts, method, url) {
       }
       const summary = { add: plan.filter((s) => !have.has(`${s.grade}|${s.code}`)).length, update: plan.filter((s) => have.has(`${s.grade}|${s.code}`)).length };
       if (b.dry_run || errors.length) return json({ ok: !errors.length, dry_run: true, errors, summary, preview: plan });
-      await batchAll(env, plan.map((s) => env.DB.prepare(`INSERT INTO gr_subjects (academic_year_id, grade_level, code, name, learning_area, subject_type, hours_per_year, collect_ratio, sort_order)
-        VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(academic_year_id, grade_level, code) DO UPDATE SET name=excluded.name, learning_area=excluded.learning_area,
-        subject_type=excluded.subject_type, hours_per_year=excluded.hours_per_year, collect_ratio=excluded.collect_ratio, sort_order=excluded.sort_order`)
-        .bind(year.id, s.grade, s.code, s.name, s.area, s.type, s.hours, s.ratio, s.sort)));
+      await batchAll(env, plan.map((s) => env.DB.prepare(`INSERT INTO gr_subjects (academic_year_id, grade_level, code, name, learning_area, subject_type, hours_per_year, collect_ratio, sort_order, grading_mode)
+        VALUES (?,?,?,?,?,?,?,?,?, COALESCE(?, 'year')) ON CONFLICT(academic_year_id, grade_level, code) DO UPDATE SET name=excluded.name, learning_area=excluded.learning_area,
+        subject_type=excluded.subject_type, hours_per_year=excluded.hours_per_year, collect_ratio=excluded.collect_ratio, sort_order=excluded.sort_order,
+        grading_mode=CASE WHEN ? IS NULL THEN gr_subjects.grading_mode ELSE excluded.grading_mode END`)
+        .bind(year.id, s.grade, s.code, s.name, s.area, s.type, s.hours, s.ratio, s.sort, s.mode, s.mode)));
       await syncCourses(env, year.id);
       await audit(env, user, "import.subjects", { year: year.id, ...summary });
       return json({ ok: true, summary });
@@ -260,8 +264,8 @@ export async function handleAdmin(request, env, user, parts, method, url) {
     const year = await resolveYear(env, b.year);
     const from = await resolveYear(env, intParam(b.from_year, "ปีต้นทาง"));
     if (from.id === year.id) fail(400, "เลือกปีต้นทางที่ไม่ใช่ปีเดียวกัน");
-    const r = await env.DB.prepare(`INSERT OR IGNORE INTO gr_subjects (academic_year_id, grade_level, code, name, learning_area, subject_type, hours_per_year, collect_ratio, sort_order)
-      SELECT ?, grade_level, code, name, learning_area, subject_type, hours_per_year, collect_ratio, sort_order FROM gr_subjects WHERE academic_year_id = ?`).bind(year.id, from.id).run();
+    const r = await env.DB.prepare(`INSERT OR IGNORE INTO gr_subjects (academic_year_id, grade_level, code, name, learning_area, subject_type, hours_per_year, collect_ratio, sort_order, grading_mode)
+      SELECT ?, grade_level, code, name, learning_area, subject_type, hours_per_year, collect_ratio, sort_order, grading_mode FROM gr_subjects WHERE academic_year_id = ?`).bind(year.id, from.id).run();
     await syncCourses(env, year.id);
     await audit(env, user, "subjects.copy", { year: year.id, from: from.id, added: r.meta?.changes ?? 0 });
     return json({ ok: true, added: r.meta?.changes ?? 0 });
@@ -306,8 +310,8 @@ export async function handleAdmin(request, env, user, parts, method, url) {
       const s = cleanSubject(b, await getSettings(env, year.id));
       if (s.sort == null) s.sort = await nextSubjectSort(env, year.id, s.grade);
       try {
-        const r = await env.DB.prepare(`INSERT INTO gr_subjects (academic_year_id, grade_level, code, name, learning_area, subject_type, hours_per_year, collect_ratio, sort_order)
-          VALUES (?,?,?,?,?,?,?,?,?)`).bind(year.id, s.grade, s.code, s.name, s.area, s.type, s.hours, s.ratio, s.sort).run();
+        const r = await env.DB.prepare(`INSERT INTO gr_subjects (academic_year_id, grade_level, code, name, learning_area, subject_type, hours_per_year, collect_ratio, sort_order, grading_mode)
+          VALUES (?,?,?,?,?,?,?,?,?,?)`).bind(year.id, s.grade, s.code, s.name, s.area, s.type, s.hours, s.ratio, s.sort, s.mode || "year").run();
         await syncCourses(env, year.id, [r.meta.last_row_id]);
         await audit(env, user, "subject.create", { id: r.meta.last_row_id, ...s });
         return json({ ok: true, id: r.meta.last_row_id });
@@ -322,10 +326,11 @@ export async function handleAdmin(request, env, user, parts, method, url) {
       if (!existing) fail(404, "ไม่พบรายวิชา");
       const s = cleanSubject(await readJson(request), await getSettings(env, existing.academic_year_id));
       if (s.sort == null) s.sort = existing.sort_order;
-      if (s.ratio !== existing.collect_ratio || s.hours !== existing.hours_per_year) {
+      if (s.mode == null) s.mode = existing.grading_mode || "year";
+      if (s.ratio !== existing.collect_ratio || s.hours !== existing.hours_per_year || s.mode !== (existing.grading_mode || "year")) {
         // ผลของรายวิชาที่ส่ง/อนุมัติแล้วต้องไม่เปลี่ยนเงียบ ๆ — ให้ส่งคืนก่อน
         const locked = await env.DB.prepare("SELECT COUNT(*) AS n FROM gr_courses WHERE subject_id = ? AND locked = 1").bind(id).first();
-        if (locked.n > 0) fail(409, `เปลี่ยนสัดส่วนคะแนน/เวลาเรียนไม่ได้ เพราะมี ${locked.n} ห้องส่งผลแล้ว — ส่งคืนให้ครูก่อน`);
+        if (locked.n > 0) fail(409, `เปลี่ยนสัดส่วนคะแนน/เวลาเรียน/รูปแบบการตัดเกรดไม่ได้ เพราะมี ${locked.n} ห้องส่งผลแล้ว — ส่งคืนให้ครูก่อน`);
       }
       const extra = [];
       if (s.grade !== existing.grade_level) {
@@ -351,8 +356,8 @@ export async function handleAdmin(request, env, user, parts, method, url) {
       }
       try {
         await env.DB.batch([
-          env.DB.prepare(`UPDATE gr_subjects SET grade_level=?, code=?, name=?, learning_area=?, subject_type=?, hours_per_year=?, collect_ratio=?, sort_order=? WHERE id=?`)
-            .bind(s.grade, s.code, s.name, s.area, s.type, s.hours, s.ratio, s.sort, id),
+          env.DB.prepare(`UPDATE gr_subjects SET grade_level=?, code=?, name=?, learning_area=?, subject_type=?, hours_per_year=?, collect_ratio=?, sort_order=?, grading_mode=? WHERE id=?`)
+            .bind(s.grade, s.code, s.name, s.area, s.type, s.hours, s.ratio, s.sort, s.mode, id),
           ...extra,
         ]);
       } catch (e) {
@@ -360,7 +365,7 @@ export async function handleAdmin(request, env, user, parts, method, url) {
         throw e;
       }
       if (s.grade !== existing.grade_level) await syncCourses(env, existing.academic_year_id, [id]);
-      await audit(env, user, existing.collect_ratio !== s.ratio ? "subject.ratio" : "subject.update", { id, before: existing, after: s });
+      await audit(env, user, existing.collect_ratio !== s.ratio ? "subject.ratio" : s.mode !== (existing.grading_mode || "year") ? "subject.grading_mode" : "subject.update", { id, before: existing, after: s });
       return json({ ok: true });
     }
     if (idPart && method === "DELETE") {
@@ -505,7 +510,7 @@ export async function handleAdmin(request, env, user, parts, method, url) {
     if (idPart && action === "lock" && method === "POST") {
       const id = intParam(idPart);
       // บังคับส่งก็ต้องผ่านการตรวจโครงสร้าง (คะแนนเต็มตรงสัดส่วน) — ไม่อย่างนั้นระบบต้องย่อขยายคะแนนเอง ขัดกับกติกาห้ามปัดเศษ
-      const info = await env.DB.prepare("SELECT s.collect_ratio, s.grade_level, c.grading_mode FROM gr_courses c JOIN gr_subjects s ON s.id = c.subject_id WHERE c.id = ?").bind(id).first();
+      const info = await env.DB.prepare("SELECT s.collect_ratio, s.grade_level, s.grading_mode FROM gr_courses c JOIN gr_subjects s ON s.id = c.subject_id WHERE c.id = ?").bind(id).first();
       if (!info) fail(404, "ไม่พบรายวิชา");
       const { results: its } = await env.DB.prepare("SELECT term_number, kind, max_score FROM gr_items WHERE course_id = ?").bind(id).all();
       const issues = structureIssues(its, info.collect_ratio, indicatorWord(info.grade_level), info.grading_mode);

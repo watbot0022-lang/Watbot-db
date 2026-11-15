@@ -204,7 +204,7 @@ export async function homeroomNames(env, yearId, grade, room) {
 export async function loadCourse(env, courseId) {
   const course = await env.DB.prepare(
     `SELECT c.id, c.classroom, c.locked, c.submitted_at, c.submitted_by, c.subject_id,
-            c.approved_at, c.approved_by, c.return_note, c.returned_at, c.reviewed_at, c.reviewed_by, c.edit_granted_at, c.data_rev, c.grading_mode,
+            c.approved_at, c.approved_by, c.return_note, c.returned_at, c.reviewed_at, c.reviewed_by, c.edit_granted_at, c.data_rev, s.grading_mode,
             (SELECT full_name FROM users WHERE id = c.reviewed_by) AS reviewed_by_name,
             (SELECT full_name FROM users WHERE id = c.submitted_by) AS submitted_by_name,
             (SELECT full_name FROM users WHERE id = c.approved_by) AS approved_by_name,
@@ -318,7 +318,7 @@ export async function yearResultsForStudents(env, yearId, grade, studentIds) {
   if (!studentIds.length) return {};
   const settings = await getSettings(env, yearId);
   const { results: courses } = await env.DB.prepare(
-    `SELECT c.id, c.classroom, c.locked, c.grading_mode, s.academic_year_id, s.grade_level, s.code, s.name, s.learning_area, s.subject_type,
+    `SELECT c.id, c.classroom, c.locked, s.grading_mode, s.academic_year_id, s.grade_level, s.code, s.name, s.learning_area, s.subject_type,
             s.hours_per_year, s.collect_ratio, s.sort_order
        FROM gr_courses c JOIN gr_subjects s ON s.id = c.subject_id
       WHERE s.academic_year_id = ? AND s.grade_level = ?
