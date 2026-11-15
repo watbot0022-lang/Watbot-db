@@ -8,7 +8,7 @@ import { remedialCap, indicatorResult, requiredHours, computeStudentResult, effe
 
 const ORIGIN = "http://school.test";
 async function setup() {
-  const env = await makeEnv();
+  const env = await makeEnv({ legacyYearMode: true });
   const cookies = {};
   async function call(who, method, path, body, { expect } = {}) {
     const headers = { "Content-Type": "application/json", Origin: ORIGIN };
@@ -123,7 +123,7 @@ test("ส่งผลเมื่อภาคหนึ่งยังไม่�
 
 // ตรวจระบบ 25 ต.ค. 2569: ห้องนำร่องที่การมาเรียนภาค 1 อยู่ใน Q-Info — นับวันเรียนตั้งแต่ภาคที่เริ่มบันทึกในระบบนี้
 test("ร้อยละมาเรียนนับตั้งแต่ภาคเรียนแรกที่มีการบันทึกการมาเรียน (ไม่นับภาค 1 เป็นมาเรียนครบ)", async () => {
-  const env = await makeEnv();
+  const env = await makeEnv({ legacyYearMode: true });
   await worker.fetch(new Request(ORIGIN + "/api/me", { headers: { Origin: ORIGIN } }), env); // สร้างตาราง gr_*
   const { attendanceRates, schoolCalendar } = await import("../src/lib/data.js");
   const sid = (await env.DB.prepare("SELECT student_id FROM student_enrollments WHERE grade_level = 'ป.4' LIMIT 1").first()).student_id;

@@ -6,7 +6,7 @@ import BANK_2569_KINDER from "../data/indicator-bank-2569-kinder.js";
 // ตั้งใจไม่ใส่ FOREIGN KEY ไปยังตารางของระบบบริหารโรงเรียน (users, students, academic_years)
 // เพื่อไม่ให้การลบผู้ใช้/นักเรียนในระบบนั้นล้มเหลวเพราะติดข้อมูลของระบบนี้
 
-export const SCHEMA_VERSION = "wb-5"; // wb-5 = gr_subjects.grading_mode ฝ่ายวัดผลกำหนดรายวิชา (wb-4 gr_courses.grading_mode เลิกใช้) · wb-2 = ตาราง gr-22 ของป่าเด็ง (gr_guard, data_rev) · wb-3 = gr-23 กิจกรรมรายภาค
+export const SCHEMA_VERSION = "wb-6"; // wb-6 = ค่าเริ่มต้นตัดเกรดรายภาค ภาคละ 100 70:30 + ปรับวิชาเดิมครั้งเดียว · wb-5 = gr_subjects.grading_mode ฝ่ายวัดผลกำหนดรายวิชา (wb-4 gr_courses.grading_mode เลิกใช้) · wb-2 = ตาราง gr-22 ของป่าเด็ง (gr_guard, data_rev) · wb-3 = gr-23 กิจกรรมรายภาค
 
 // ตารางพื้นฐาน (ป่าเด็งใช้ร่วมกับระบบทะเบียน banpadeng-school-db) — วัดโบสถ์ทำงานเดี่ยว ระบบจึงสร้างเอง
 export const CORE_SQL = [
@@ -351,7 +351,7 @@ export const ADDED_COLUMNS = [
   // wb-4: (เลิกใช้แล้ว — ย้ายไปตั้งที่ gr_subjects ใน wb-5)
   ["gr_courses", "grading_mode", "TEXT NOT NULL DEFAULT 'year'"],
   // wb-5: รูปแบบการตัดเกรด ฝ่ายวัดผลกำหนดรายวิชา (ทุกห้อง) year = รายปี (ภาคละ 50) · term = รายภาค (ภาคละ 100)
-  ["gr_subjects", "grading_mode", "TEXT NOT NULL DEFAULT 'year'"],
+  ["gr_subjects", "grading_mode", "TEXT NOT NULL DEFAULT 'term'"],
 ];
 
 async function addMissingColumns(env) {
@@ -415,6 +415,20 @@ export async function migrateActivityTerms(env) {
 
 const ensured = new WeakMap();
 
+// ครั้งเดียว: ทุกวิชาที่มีอยู่ → ตัดเกรดรายภาค ภาคละ 100 สัดส่วน 70:30 (ข้ามวิชาที่มีห้องส่งผลแล้ว)
+async function migrateTermDefault(env) {
+  const KEY = "wb_term100_7030_migrated";
+  const done = await env.DB.prepare("SELECT 1 FROM system_settings WHERE setting_key = ?").bind(KEY).first();
+  if (done) return;
+  await env.DB.batch([
+    env.DB.prepare(`UPDATE gr_subjects SET grading_mode = 'term', collect_ratio = 70
+      WHERE NOT EXISTS (SELECT 1 FROM gr_courses c WHERE c.subject_id = gr_subjects.id AND c.locked = 1)`),
+    env.DB.prepare("UPDATE gr_settings SET collect_ratio = 70"), // สัดส่วนเริ่มต้นของวิชาใหม่ทุกปี
+    env.DB.prepare(`INSERT INTO system_settings (setting_key, setting_value, updated_at) VALUES (?, '1', datetime('now'))
+      ON CONFLICT(setting_key) DO NOTHING`).bind(KEY),
+  ]);
+}
+
 export async function ensureSchema(env) {
   if (ensured.has(env.DB)) return ensured.get(env.DB);
   const job = (async () => {
@@ -426,6 +440,7 @@ export async function ensureSchema(env) {
     await migrateLateCode(env);
     await migrateActivityTerms(env);
     await seedIndicatorBank(env);
+    await migrateTermDefault(env);
     await env.DB.prepare(`INSERT INTO system_settings (setting_key, setting_value, updated_at)
       VALUES ('students_report_schema', ?, datetime('now'))
       ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value, updated_at = datetime('now')`)

@@ -8,7 +8,7 @@ import { guardedBatch, batchAll, HttpError } from "../src/lib/http.js";
 
 const ORIGIN = "http://school.test";
 async function setup() {
-  const env = await makeEnv();
+  const env = await makeEnv({ legacyYearMode: true });
   const cookies = {};
   async function call(who, method, path, body, { expect } = {}) {
     const headers = { "Content-Type": "application/json", Origin: ORIGIN };

@@ -261,7 +261,7 @@ async function downloadKind(kind, withData) {
       { email: "somsri@gmail.com", full_name: "นางสมศรี รักเรียน", position: "ครูชำนาญการ", role: "ครู", team: "ใช่", password: "" }],
     students: [{ student_code: "10101", name_prefix: "เด็กหญิง", first_name: "ตัวอย่าง", last_name: "นามสกุลตัวอย่าง", gender: "ญ", national_id: "1234567890123", birth_date: "31/05/2562", room: "ป.1/1",
       nationality: "ไทย", religion: "พุทธ", guardian_prefix: "นาง", guardian_first_name: "ผู้ปกครอง", guardian_last_name: "นามสกุลตัวอย่าง", guardian_relationship: "มารดา", guardian_phone: "0812345678", province: "ราชบุรี" }],
-    subjects: [{ grade_level: "ป.4", code: "ท14101", name: "ภาษาไทย", learning_area: "ภาษาไทย", subject_type: "พื้นฐาน", hours_per_year: 160, collect_ratio: 70, grading_mode: "รายปี" }],
+    subjects: [{ grade_level: "ป.4", code: "ท14101", name: "ภาษาไทย", learning_area: "ภาษาไทย", subject_type: "พื้นฐาน", hours_per_year: 160, collect_ratio: 70, grading_mode: "รายภาค" }],
     teachers: [{ room: "ป.4/1", code: "ท14101", name: "ภาษาไทย", teachers: "นายสมชาย ใจดี" }],
     homerooms: [{ room: "ป.4/1", teachers: "นายสมชาย ใจดี, นางสมศรี รักเรียน" }],
     bank: [{ grade_level: "ป.4", learning_area: "ภาษาไทย", subject_code: "", kind: "ระหว่างทาง", code: "ท 1.1 ป.4/1", title: "อ่านออกเสียงบทร้อยแก้วและบทร้อยกรองได้ถูกต้อง" }],
@@ -294,20 +294,20 @@ async function downloadKind(kind, withData) {
 }
 
 // ---------- รายวิชา ----------
-// สัดส่วนคะแนนระหว่างภาค:ปลายภาค ตั้งแยกรายวิชา (เช่น วิชาปฏิบัติ 80:20) — แต่ละภาคเต็ม 50
+// สัดส่วนคะแนนระหว่างภาค:ปลายภาค ตั้งแยกรายวิชา (เช่น วิชาปฏิบัติ 80:20) — ค่าเริ่มต้นรายภาค ภาคละ 100 · 70:30
 const RATIOS = [50, 60, 70, 75, 80, 90, 100];
-const perTerm = (r) => `ภาคละ ${String(r / 2).replace(/\.0$/, "")} + ${String(50 - r / 2).replace(/\.0$/, "")}`;
+const perTerm = (r, m = "term") => { const f = m === "year" ? 50 : 100, c = r * f / 100; return `ภาคละ ${String(c).replace(/\.0$/, "")} + ${String(f - c).replace(/\.0$/, "")}`; };
 const ratioOptions = (cur) => [...new Set([...RATIOS, Number(cur)])].sort((a, b) => a - b)
   .map((r) => `<option value="${r}" ${r === Number(cur) ? "selected" : ""}>${r}:${100 - r}${r === 100 ? " (ไม่มีสอบปลายภาค)" : ""}</option>`).join("");
 // รูปแบบการตัดเกรด (ฝ่ายวัดผลกำหนดรายวิชา ใช้กับทุกห้อง): รายปี ภาคละ 50 · รายภาค ภาคละ 100
 const MODES = [["year", "รายปี"], ["term", "รายภาค"]];
-const modeOptions = (cur) => MODES.map(([v, l]) => `<option value="${v}" ${(cur || "year") === v ? "selected" : ""}>${l}</option>`).join("");
+const modeOptions = (cur) => MODES.map(([v, l]) => `<option value="${v}" ${(cur || "term") === v ? "selected" : ""}>${l}</option>`).join("");
 async function renderSubjects() {
   const [{ subjects, learning_areas }, { settings: st }] = await Promise.all([api(`/api/admin/subjects?${yq}`), api(`/api/admin/settings?${yq}`)]);
   const defaultRatio = st.collect_ratio;
   view.innerHTML = `<div class="panel">
     <div class="panel-head"><h2>รายวิชาปีการศึกษา ${me.year.year_be}</h2><button class="btn primary" id="addSub">เพิ่มรายวิชา</button></div>
-    <p class="muted small" style="margin-top:0">สัดส่วนคะแนนตั้งแยกรายวิชาได้ เช่น วิชาภาคปฏิบัติ 80:20 = แต่ละภาค ระหว่างภาค 40 + ปลายภาค 10 · เปลี่ยนแล้วครูต้องปรับคะแนนเต็มในโครงสร้างให้ตรงสัดส่วนใหม่ก่อนส่งผล
+    <p class="muted small" style="margin-top:0">สัดส่วนคะแนนตั้งแยกรายวิชาได้ เช่น วิชาภาคปฏิบัติ 80:20 (รายภาค) = แต่ละภาค ระหว่างภาค 80 + ปลายภาค 20 · เปลี่ยนแล้วครูต้องปรับคะแนนเต็มในโครงสร้างให้ตรงสัดส่วนใหม่ก่อนส่งผล
       · ตัดเกรด<b>รายปี</b> = ภาคละ 50 รวม 2 ภาคตัดเกรดครั้งเดียว · <b>รายภาค</b> = ภาคละ 100 ตัดเกรดแยกภาค ผลทั้งปีใช้ค่าเฉลี่ย 2 ภาค (ฝ่ายวัดผลกำหนด ครูเปลี่ยนเองไม่ได้)</p>
     ${GRADES.map((g) => { const list = subjects.filter((s) => s.grade_level === g); return list.length ? `
       <h3 style="margin-top:18px">${g}</h3>
@@ -315,7 +315,7 @@ async function renderSubjects() {
       <tbody>${list.map((s) => `<tr><td>${esc(s.code)}</td><td>${esc(s.name)}</td><td class="small">${esc(s.learning_area)}</td><td>${s.subject_type === "basic" ? "พื้นฐาน" : "เพิ่มเติม"}</td>
         <td class="num">${s.hours_per_year}</td>
         <td><select class="ratio-sel" data-ratio="${s.id}" aria-label="สัดส่วนคะแนน ${esc(s.code)}" ${s.locked_count ? 'disabled title="มีห้องที่ส่งผลแล้ว ส่งคืนก่อนจึงเปลี่ยนได้"' : ""}>${ratioOptions(s.collect_ratio)}</select>
-          <span class="small muted">${perTerm(s.collect_ratio)}</span></td>
+          <span class="small muted">${perTerm(s.collect_ratio, s.grading_mode)}</span></td>
         <td><select data-mode="${s.id}" aria-label="รูปแบบการตัดเกรด ${esc(s.code)}" ${s.locked_count ? 'disabled title="มีห้องที่ส่งผลแล้ว ส่งคืนก่อนจึงเปลี่ยนได้"' : ""}>${modeOptions(s.grading_mode)}</select></td><td class="num">${s.course_count}</td>
         <td class="actions"><button class="btn small" data-edit="${s.id}">แก้ไข</button><button class="btn small danger" data-del="${s.id}">ลบ</button></td></tr>`).join("")}</tbody></table></div>` : ""; }).join("") || `<div class="empty"><strong>ยังไม่มีรายวิชา</strong>เริ่มจากเมนู "เริ่มต้นปีการศึกษา" หรือกดเพิ่มรายวิชา</div>`}
   </div>`;
@@ -347,8 +347,8 @@ async function renderSubjects() {
   for (const sel of view.querySelectorAll("[data-ratio]")) sel.onchange = async () => {
     const s = subjects.find((x) => x.id === Number(sel.dataset.ratio));
     const r = Number(sel.value);
-    const warn = s.structured_count ? `<br><br><b>${s.structured_count} ห้องตั้งโครงสร้างคะแนนไว้แล้ว</b> ครูต้องปรับคะแนนเต็มให้เป็น${perTerm(r)}ก่อนจึงส่งผลได้ (ระบบไม่ย่อขยายคะแนนให้)` : "";
-    if (!(await confirmBox("เปลี่ยนสัดส่วนคะแนน", `${esc(s.code)} ${esc(s.name)} ${esc(s.grade_level)}: ${s.collect_ratio}:${100 - s.collect_ratio} → <b>${r}:${100 - r}</b> (${perTerm(r)})${warn}`, "เปลี่ยน"))) { sel.value = s.collect_ratio; return; }
+    const warn = s.structured_count ? `<br><br><b>${s.structured_count} ห้องตั้งโครงสร้างคะแนนไว้แล้ว</b> ครูต้องปรับคะแนนเต็มให้เป็น${perTerm(r, s.grading_mode)}ก่อนจึงส่งผลได้ (ระบบไม่ย่อขยายคะแนนให้)` : "";
+    if (!(await confirmBox("เปลี่ยนสัดส่วนคะแนน", `${esc(s.code)} ${esc(s.name)} ${esc(s.grade_level)}: ${s.collect_ratio}:${100 - s.collect_ratio} → <b>${r}:${100 - r}</b> (${perTerm(r, s.grading_mode)})${warn}`, "เปลี่ยน"))) { sel.value = s.collect_ratio; return; }
     try {
       await api(`/api/admin/subjects/${s.id}`, { method: "PUT", body: { grade_level: s.grade_level, code: s.code, name: s.name, learning_area: s.learning_area, subject_type: s.subject_type, hours_per_year: s.hours_per_year, collect_ratio: r, sort_order: s.sort_order } });
       toast(`ตั้ง ${s.code} เป็น ${r}:${100 - r} แล้ว`); render();
