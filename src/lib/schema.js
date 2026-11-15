@@ -6,7 +6,7 @@ import BANK_2569_KINDER from "../data/indicator-bank-2569-kinder.js";
 // ตั้งใจไม่ใส่ FOREIGN KEY ไปยังตารางของระบบบริหารโรงเรียน (users, students, academic_years)
 // เพื่อไม่ให้การลบผู้ใช้/นักเรียนในระบบนั้นล้มเหลวเพราะติดข้อมูลของระบบนี้
 
-export const SCHEMA_VERSION = "wb-3"; // wb-2 = ตาราง gr-22 ของป่าเด็ง (gr_guard, data_rev) · wb-3 = gr-23 กิจกรรมรายภาค
+export const SCHEMA_VERSION = "wb-4"; // wb-4 = gr_courses.grading_mode (ตัดเกรดรายภาค/รายปี) · wb-2 = ตาราง gr-22 ของป่าเด็ง (gr_guard, data_rev) · wb-3 = gr-23 กิจกรรมรายภาค
 
 // ตารางพื้นฐาน (ป่าเด็งใช้ร่วมกับระบบทะเบียน banpadeng-school-db) — วัดโบสถ์ทำงานเดี่ยว ระบบจึงสร้างเอง
 export const CORE_SQL = [
@@ -348,6 +348,8 @@ export const ADDED_COLUMNS = [
   ["gr_courses", "edit_granted_at", "TEXT"],
   // gr-22: เลขรุ่นข้อมูลคะแนน/ผลของรายวิชา — เพิ่มทุกครั้งที่บันทึก ใช้กันการส่งผลด้วยข้อมูลที่ครูยังไม่เห็น
   ["gr_courses", "data_rev", "INTEGER NOT NULL DEFAULT 0"],
+  // wb-4: รูปแบบการตัดเกรดของรายวิชา year = รายปี (ภาคละ 50) · term = รายภาค (ภาคละ 100)
+  ["gr_courses", "grading_mode", "TEXT NOT NULL DEFAULT 'year'"],
 ];
 
 async function addMissingColumns(env) {

@@ -1,5 +1,5 @@
 import { shell, api, esc, toast, showError, gradeBadge, dialog, confirmBox, fmt, ICONS, params, withYear, withTerm, thaiTime, TERM_LABEL } from "/js/app.js";
-import { computeStudentResult, resultWithAttendance, NUMERIC_GRADES, indicatorWord, indicatorResult, structureIssues, indicatorPassPct, remedialCap } from "/js/grading.js";
+import { computeStudentResult, resultWithAttendance, NUMERIC_GRADES, indicatorWord, indicatorResult, structureIssues, indicatorPassPct, remedialCap, termFull, gradingMode, GRADING_MODES } from "/js/grading.js";
 import { parseIndicatorLines } from "/js/indicators.js";
 
 const me = await shell("home");
@@ -53,7 +53,7 @@ function renderHeader() {
   document.title = `${c.code} ${c.name} ${c.grade_level}/${c.classroom} — สมุดคะแนน`;
   document.getElementById("title").textContent = `${c.code} ${c.name}`;
   document.getElementById("meta").textContent =
-    `${c.grade_level}/${c.classroom} · ปีการศึกษา ${c.year_be} · ${c.hours_per_year} ชม./ปี · ต่อภาค: ระหว่างภาค ${fmt(c.collect_ratio / 2)} + ปลายภาค ${fmt(50 - c.collect_ratio / 2)} = 50` +
+    `${c.grade_level}/${c.classroom} · ปีการศึกษา ${c.year_be} · ${c.hours_per_year} ชม./ปี · ${GRADING_MODES[gradingMode(c.grading_mode)]} · ต่อภาค: ระหว่างภาค ${fmt(targets(c).cT)} + ปลายภาค ${fmt(targets(c).fT)} = ${targets(c).full}` +
     (c.teachers.length ? ` · ครูผู้สอน ${c.teachers.map((t) => t.full_name).join(", ")}` : "");
   const back = document.getElementById("backLink");
   if (me.role === "exec") { back.textContent = "อนุมัติผลการเรียน"; back.href = "/admin.html#approve"; }
@@ -149,10 +149,14 @@ function render() {
   else renderSetup();
 }
 
-const editable = () => !!data.course.can_edit; // ฝ่ายวัดผลแก้รายวิชาที่ส่งแล้วได้ (server ส่ง can_edit มาให้)
+const editable = () => !!data.course.can_edit;
+// รูปแบบการตัดเกรดของรายวิชา: รายปี (ภาคละ 50) / รายภาค (ภาคละ 100)
+const isTermMode = () => gradingMode(data.course.grading_mode) === "term";
+const TFULL = () => termFull(data.course.grading_mode);
+const targets = (c = data.course) => { const full = termFull(c.grading_mode), cT = c.collect_ratio * full / 100; return { full, cT, fT: full - cT }; }; // ฝ่ายวัดผลแก้รายวิชาที่ส่งแล้วได้ (server ส่ง can_edit มาให้)
 // ต้องตรงกับ gradeSettings() ฝั่งเซิร์ฟเวอร์ทุกค่า เพื่อให้ตัวเลขบนจอ = ตัวเลขในเอกสาร
 const settingsForCalc = () => ({
-  collect_ratio: data.course.collect_ratio, hours_per_year: data.course.hours_per_year,
+  collect_ratio: data.course.collect_ratio, grading_mode: data.course.grading_mode, hours_per_year: data.course.hours_per_year,
   attendance_pass_pct: data.settings.attendance_pass_pct, indicator_pass_pct: data.settings.indicator_pass_pct,
   indicator_pass_pct_t2: data.settings.indicator_pass_pct_t2, finalized: !!data.course.locked,
 });
@@ -194,7 +198,7 @@ function renderSheet(term) {
             <button data-edit-item="${it.id}" ${can ? "" : "disabled"}>${unitOf(it) ? `<span class="unitno">หน่วยที่ ${unitOf(it).unit_no}</span>` : ""}<span class="code">${esc(it.kind === "final" ? "ปลายภาค" : it.code || "เก็บ")}</span><span class="t">${esc(it.title)}</span><span class="max">เต็ม ${fmt(it.max_score)}</span></button></th>`).join("")}
           <th class="col-head">รวมภาค ${term}<span class="max">เต็ม ${fmt(termMax)}</span></th>
           ${term === 1 ? '<th class="col-head">สถานะ<span class="max">ภาค 1</span></th>'
-            : '<th class="col-head">ภาค 1<span class="max">เต็ม 50</span></th><th class="col-head">รวมทั้งปี<span class="max">เต็ม 100</span></th><th class="col-head">ผล</th>'}
+            : `<th class="col-head">ภาค 1<span class="max">เต็ม ${TFULL()}</span></th><th class="col-head">${isTermMode() ? "เฉลี่ย 2 ภาค" : "รวมทั้งปี"}<span class="max">เต็ม 100</span></th><th class="col-head">ผล${isTermMode() ? "ทั้งปี" : ""}</th>`}
         </tr></thead>
         <tbody>${data.students.map((s) => rowHtml(s, items, term)).join("")}</tbody>
         <tfoot><tr><td class="stick no"></td><td class="stick name" style="text-align:left">ค่าเฉลี่ย</td>${items.map((it) => `<td data-avg="${it.id}"></td>`).join("")}<td></td>${term === 1 ? "<td></td>" : "<td></td><td></td><td></td>"}</tr></tfoot>
@@ -234,6 +238,7 @@ function termStateText(calc, t) {
   const x = calc.term_scores?.[t];
   if (!x) return "–";
   if (x.carried) return '<span class="tag">ยกมา</span>';
+  if (x.complete && isTermMode() && x.grade != null) return `<span class="tag ok">ครบ</span> ${gradeBadge(x.grade)}`;
   return x.complete ? '<span class="tag ok">ครบ</span>' : `<span class="muted small">ยังไม่ครบ ${x.missing} ช่อง</span>`;
 }
 // คะแนนรวมภาคอื่น (ภาค 2 แสดงคะแนนภาค 1 ประกอบการสรุปทั้งปี)
@@ -241,7 +246,7 @@ function otherTermText(calc, t) {
   const x = calc.term_scores?.[t];
   if (!x) return "–";
   if (x.carried) return `${fmt(x.total)} <span class="tag" title="ยกมาจาก ปพ.6 โรงเรียนเดิม">ยกมา</span>`;
-  return x.complete ? fmt(x.total) : `<span class="muted small" title="ภาค ${t} คะแนนยังไม่ครบ ${x.missing} ช่อง">ไม่ครบ</span>`;
+  return x.complete ? fmt(x.total) + (isTermMode() && x.grade != null ? ` ${gradeBadge(x.grade)}` : "") : `<span class="muted small" title="ภาค ${t} คะแนนยังไม่ครบ ${x.missing} ช่อง">ไม่ครบ</span>`;
 }
 // อัปเดตช่องสรุปท้ายแถว (ใช้หลังพิมพ์คะแนน)
 function refreshRowTail(tr, calc, items, sc) {
@@ -256,7 +261,7 @@ function termSumText(calc, items, sc) {
   const t = calc.term_scores?.[items[0].term_number];
   if (t?.carried) return `${fmt(t.total)} <span class="tag" title="ยกมาจาก ปพ.6 โรงเรียนเดิม">ยกมา</span>`;
   if (!items.some((i) => sc[i.id] != null)) return "";
-  return fmt(calc.term_scores?.[items[0].term_number]?.total ?? 0);
+  return fmt(t?.total ?? 0) + (isTermMode() && items[0].term_number === 2 && t?.complete && t.grade != null ? ` ${gradeBadge(t.grade)}` : "");
 }
 function yearTotalText(calc) {
   return calc.total == null || calc.total_max !== 100 ? "–" : fmt(calc.total);
@@ -500,7 +505,7 @@ function attText(sid) {
 // ---------------- สรุปผลภาคเรียนที่ 1 (ยังไม่ตัดเกรด) ----------------
 function renderTermSummary(term) {
   const c = data.course;
-  const cT = c.collect_ratio / 2, fT = 50 - cT;
+  const { full: TF, cT, fT } = targets(c);
   const termItems = data.items.filter((i) => i.term_number === term);
   const ids = new Set(termItems.map((i) => i.id));
   const active = data.students.filter((s) => s.enrollment_status === "enrolled");
@@ -511,14 +516,14 @@ function renderTermSummary(term) {
   view.innerHTML = `
     <div class="panel" style="margin-bottom:14px">
       <div class="actions"><span>นักเรียน <b class="num">${active.length}</b> คน</span><span>กรอกคะแนนครบ <b class="num">${done.length}</b> คน</span>
-        <span>คะแนนเฉลี่ยภาค ${term} <b class="num">${avg == null ? "–" : fmt(avg, 2)}</b> / 50</span></div>
-      <p class="muted small" style="margin:10px 0 0">${TERM_LABEL[term]}เต็ม 50 คะแนน (ระหว่างภาค ${fmt(cT)} + ปลายภาค ${fmt(fT)}) · ไม่ปัดเศษ
-        · ผลการเรียน (เกรด) ร/มส และการส่งผลการเรียน สรุปทั้งปีที่<b>ภาคเรียนที่ 2</b></p>
+        <span>คะแนนเฉลี่ยภาค ${term} <b class="num">${avg == null ? "–" : fmt(avg, 2)}</b> / ${TF}</span></div>
+      <p class="muted small" style="margin:10px 0 0">${TERM_LABEL[term]}เต็ม ${TF} คะแนน (ระหว่างภาค ${fmt(cT)} + ปลายภาค ${fmt(fT)}) · ไม่ปัดเศษ
+        · ${isTermMode() ? "ตัดเกรดรายภาค: แสดงเกรดภาคนี้เมื่อกรอกครบ · ผลการเรียนทั้งปี ร/มส และการส่งผล สรุปที่" : "ผลการเรียน (เกรด) ร/มส และการส่งผลการเรียน สรุปทั้งปีที่"}<b>ภาคเรียนที่ 2</b></p>
     </div>
     ${termItems.length ? `<div class="table-wrap">
       <table class="list">
         <thead><tr><th class="num">เลขที่</th><th>ชื่อ–สกุล</th><th class="num">ระหว่างภาค (${fmt(cT)})</th><th class="num">ปลายภาค (${fmt(fT)})</th>
-          <th class="num">รวมภาค ${term} (50)</th><th class="num">ขาด/ลา ภาค ${term} (วัน)</th><th>หมายเหตุ</th></tr></thead>
+          <th class="num">รวมภาค ${term} (${TF})</th>${isTermMode() ? `<th class="num">เกรดภาค ${term}</th>` : ""}<th class="num">ขาด/ลา ภาค ${term} (วัน)</th><th>หมายเหตุ</th></tr></thead>
         <tbody>${data.students.map((s) => {
           const k = data.computed[s.id], t = tOf(s), a = absent(s.id);
           const failed = k.failed_indicators.filter((id) => ids.has(id)).length;
@@ -526,7 +531,7 @@ function renderTermSummary(term) {
           return `<tr class="${s.enrollment_status !== "enrolled" ? "muted" : ""} ${s.enrollment_status === "transferred" || s.enrollment_status === "withdrawn" ? "inactive" : ""}">
             <td class="num">${s.number ?? ""}</td><td>${esc(s.name)}${statusTag(s)}</td>
             <td class="num">${t && t.collect != null ? fmt(t.collect) : "–"}</td><td class="num">${t && t.final != null ? fmt(t.final) : "–"}</td>
-            <td class="num"><b>${t && t.complete ? fmt(t.total) : "–"}</b></td>
+            <td class="num"><b>${t && t.complete ? fmt(t.total) : "–"}</b></td>${isTermMode() ? `<td class="num">${t && t.grade != null ? gradeBadge(t.grade) : "–"}</td>` : ""}
             <td class="num">${a.detail ? `<span data-tip="${esc(a.detail)} (วัน)" tabindex="0">${a.off}</span>` : "–"}</td>
             <td class="small muted">${[note, failed ? `ไม่ผ่าน ${failed} ${W}` : ""].filter(Boolean).map(esc).join(" · ")}</td></tr>`;
         }).join("")}</tbody>
@@ -544,14 +549,14 @@ function renderSummary() {
   view.innerHTML = `
     <div class="panel" style="margin-bottom:14px">
       <div class="actions">${[...NUMERIC_GRADES, "ร", "มส"].map((g) => `<span>${gradeBadge(g)} <span class="num">${counts[g] || 0}</span></span>`).join("")}</div>
-      <p class="muted small" style="margin:10px 0 0">สรุปผลทั้งปี = ภาคเรียนที่ 1 + ภาคเรียนที่ 2 (เต็ม 100) แล้วตัดเกรดครั้งเดียว ·
+      <p class="muted small" style="margin:10px 0 0">${isTermMode() ? "ตัดเกรดรายภาค: แต่ละภาคเต็ม 100 ตัดเกรดแยกภาค · ผลทั้งปี = ค่าเฉลี่ยคะแนน 2 ภาค (เต็ม 100) แล้วตัดเกรด" : "สรุปผลทั้งปี = ภาคเรียนที่ 1 + ภาคเรียนที่ 2 (เต็ม 100) แล้วตัดเกรดครั้งเดียว"} ·
         การมาเรียนคิดจากบันทึกของครูประจำชั้นและปฏิทินวันหยุด (ครูผู้สอนไม่ต้องเช็กชื่อ) — มาเรียนต่ำกว่า ${data.settings.attendance_pass_pct}% ระบบให้ผล มส อัตโนมัติ
         · คะแนนรวมไม่ปัดเศษ เช่น 79.99 ได้เกรด 3.5</p>
     </div>
     <div class="table-wrap">
       <table class="list">
-        <thead><tr><th class="num">เลขที่</th><th>ชื่อ–สกุล</th><th class="num">ภาค 1 (50)</th><th class="num">ภาค 2 (50)</th><th class="num">ระหว่างภาค (${c.collect_ratio})</th><th class="num">ปลายภาค (${100 - c.collect_ratio})</th>
-          <th class="num">รวมทั้งปี</th><th class="num">มาเรียน</th><th>ผลพิเศษ</th><th>ผลเดิม</th><th>แก้ไข/ซ่อม</th><th>ผลการเรียน</th><th>หมายเหตุ</th></tr></thead>
+        <thead><tr><th class="num">เลขที่</th><th>ชื่อ–สกุล</th><th class="num">ภาค 1 (${TFULL()})</th><th class="num">ภาค 2 (${TFULL()})</th><th class="num">ระหว่างภาค (${c.collect_ratio})</th><th class="num">ปลายภาค (${100 - c.collect_ratio})</th>
+          <th class="num">${isTermMode() ? "เฉลี่ย 2 ภาค" : "รวมทั้งปี"}</th><th class="num">มาเรียน</th><th>ผลพิเศษ</th><th>ผลเดิม</th><th>แก้ไข/ซ่อม</th><th>ผลการเรียน</th><th>หมายเหตุ</th></tr></thead>
         <tbody>${data.students.map((s) => {
           const k = data.computed[s.id], r = data.results[s.id] || {};
           const failed = k.failed_indicators.length;
@@ -663,8 +668,8 @@ function renderSetup() {
   const c = data.course;
   const can = editable();
   const sum = (term, kind) => data.items.filter((i) => (!term || i.term_number === term) && i.kind === kind).reduce((a, i) => a + i.max_score, 0);
-  const cT = c.collect_ratio / 2, fT = 50 - cT;
-  const issues = structureIssues(data.items, c.collect_ratio, W).filter((x) => x.startsWith("ภาค"));
+  const { full: TF, cT, fT } = targets(c);
+  const issues = structureIssues(data.items, c.collect_ratio, W, c.grading_mode).filter((x) => x.startsWith("ภาค"));
   const termLine = (t) => {
     const has = data.items.some((i) => i.term_number === t);
     if (!has) return "";
@@ -701,9 +706,11 @@ function renderSetup() {
         <p class="muted small">เฉพาะฝ่ายวิชาการ/ทีมวัดผล — ครูทุกห้องของวิชานี้จะกดใช้แม่แบบได้ ห้องที่ใช้ไปแล้วไม่เปลี่ยนตาม</p>` : ""}</div>` : "";
   view.innerHTML = `
     <div class="panel">
-      <div class="panel-head"><h2>สัดส่วนคะแนนต่อภาคเรียน</h2></div>
+      <div class="panel-head"><h2>สัดส่วนคะแนนต่อภาคเรียน</h2>
+        <label class="small" style="display:flex;gap:6px;align-items:center">รูปแบบการตัดเกรด
+          <select id="gradingMode" ${can ? "" : "disabled"}>${Object.entries(GRADING_MODES).map(([k, l]) => `<option value="${k}" ${gradingMode(c.grading_mode) === k ? "selected" : ""}>${l}</option>`).join("")}</select></label></div>
       <div class="ratio-bar"><span class="c" style="width:${c.collect_ratio}%">ระหว่างภาค ${fmt(cT)}</span><span class="f" style="width:${100 - c.collect_ratio}%">ปลายภาค ${fmt(fT)}</span></div>
-      <p class="muted small">แต่ละภาคเต็ม 50 คะแนน (ทั้งปี 100) · คะแนนเต็มของ${W}รวมกันต้องเท่ากับ ${fmt(cT)} และสอบปลายภาครวม ${fmt(fT)} พอดี
+      <p class="muted small">${isTermMode() ? "ตัดเกรดรายภาค: แต่ละภาคเต็ม 100 คะแนน ตัดเกรดแยกแต่ละภาค · ผลทั้งปี = ค่าเฉลี่ย 2 ภาค" : "ตัดเกรดรายปี: แต่ละภาคเต็ม 50 คะแนน (ทั้งปี 100) ตัดเกรดครั้งเดียวปลายปี"} · คะแนนเต็มของ${W}รวมกันต้องเท่ากับ ${fmt(cT)} และสอบปลายภาครวม ${fmt(fT)} พอดี
         ระบบใช้คะแนนจริงตามที่กรอก ไม่ย่อขยายและไม่ปัดเศษ · ฝ่ายวิชาการเป็นผู้กำหนดสัดส่วนของแต่ละวิชา</p>
       ${issues.length ? `<p class="note warn" style="margin-top:8px">${issues.map(esc).join("<br>")}<br>แก้ให้ตรงก่อนยืนยันผล</p>` : ""}
     </div>
@@ -721,6 +728,15 @@ function renderSetup() {
       <button class="btn" id="pushBtn" ${data.items.some((i) => i.term_number === T) ? "" : "disabled"}>${ICONS.copy} เลือกห้อง</button></div>
       <p class="muted small" id="pushInfo" style="margin:0"></p></div>` : ""}`;
   for (const b of view.querySelectorAll("[data-build]")) b.onclick = () => openBuilder(Number(b.dataset.build));
+  const gm = document.getElementById("gradingMode");
+  if (gm) gm.onchange = async () => {
+    const mode = gm.value, label = GRADING_MODES[mode];
+    const msg = mode === "term" ? "ตัดเกรดรายภาค: แต่ละภาคเต็ม 100 คะแนน ตัดเกรดแยกภาค และผลทั้งปีใช้ค่าเฉลี่ย 2 ภาค — คะแนนเต็มของช่องคะแนนเดิมต้องปรับให้รวมได้ 100 ต่อภาค"
+      : "ตัดเกรดรายปี: แต่ละภาคเต็ม 50 คะแนน รวม 2 ภาคเต็ม 100 ตัดเกรดครั้งเดียว — คะแนนเต็มของช่องคะแนนเดิมต้องปรับให้รวมได้ 50 ต่อภาค";
+    if (!(await confirmBox(`เปลี่ยนเป็น${label}?`, msg))) { gm.value = gradingMode(data.course.grading_mode); return; }
+    try { data = await api(`/api/courses/${courseId}/grading-mode`, { method: "PUT", body: { mode } }); toast(`เปลี่ยนเป็น${label}แล้ว`); renderHeader(); render(); }
+    catch (err) { gm.value = gradingMode(data.course.grading_mode); showError(err); }
+  };
   for (const b of view.querySelectorAll("[data-tpl]")) b.onclick = () => applyTemplate(Number(b.dataset.tpl));
   const ts = document.getElementById("tplSave"), td = document.getElementById("tplDel");
   if (ts) ts.onclick = saveTemplate;
@@ -921,7 +937,7 @@ async function openBuilder(term, { resume = false } = {}) {
     .map((u) => ({ id: u.id, title: u.title, hours: u.hours ?? "", task: u.task || "", items: items.filter((i) => i.kind !== "final" && i.unit_id === u.id).map(toB) }));
   const loose = items.filter((i) => i.kind !== "final" && !units.some((u) => u.id === i.unit_id)).map(toB);
   const finals = items.filter((i) => i.kind === "final").map((i) => ({ ...toB(i), inds: (i.indicators || []).map((x) => ({ code: x.code || "", title: x.title })) }));
-  const fT = 50 - data.course.collect_ratio / 2;
+  const { fT } = targets();
   if (!units.length) units.push({ id: null, title: "", hours: "", task: "", items: [] });
   if (!finals.length) finals.push({ id: null, code: "", title: `สอบปลายภาคเรียนที่ ${term}`, max: fT, inds: [] });
   builder = { term, units, loose, finals, dirty: false };
@@ -1010,7 +1026,7 @@ function builderTotals() {
 }
 
 function drawBuilder() {
-  const B = builder, c = data.course, cT = c.collect_ratio / 2, fT = 50 - cT;
+  const B = builder, c = data.course, { cT, fT } = targets(c);
   const itemRow = (it, where, idx) => { const k = bankKindOf(it); return `<div class="b-item">
       <span class="code">${esc(it.code || "–")}</span>
       <span>${esc(it.title)}${k && !k.startsWith("ผล") ? ` <span class="tag ${k === "ปลายทาง" ? "ok" : ""}">${esc(k)}</span>` : ""}</span>

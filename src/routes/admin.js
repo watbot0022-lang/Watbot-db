@@ -505,10 +505,10 @@ export async function handleAdmin(request, env, user, parts, method, url) {
     if (idPart && action === "lock" && method === "POST") {
       const id = intParam(idPart);
       // บังคับส่งก็ต้องผ่านการตรวจโครงสร้าง (คะแนนเต็มตรงสัดส่วน) — ไม่อย่างนั้นระบบต้องย่อขยายคะแนนเอง ขัดกับกติกาห้ามปัดเศษ
-      const info = await env.DB.prepare("SELECT s.collect_ratio, s.grade_level FROM gr_courses c JOIN gr_subjects s ON s.id = c.subject_id WHERE c.id = ?").bind(id).first();
+      const info = await env.DB.prepare("SELECT s.collect_ratio, s.grade_level, c.grading_mode FROM gr_courses c JOIN gr_subjects s ON s.id = c.subject_id WHERE c.id = ?").bind(id).first();
       if (!info) fail(404, "ไม่พบรายวิชา");
       const { results: its } = await env.DB.prepare("SELECT term_number, kind, max_score FROM gr_items WHERE course_id = ?").bind(id).all();
-      const issues = structureIssues(its, info.collect_ratio, indicatorWord(info.grade_level));
+      const issues = structureIssues(its, info.collect_ratio, indicatorWord(info.grade_level), info.grading_mode);
       if (issues.length) fail(400, `ล็อกไม่ได้: ${issues.join(" และ ")}`);
       const r = await env.DB.prepare("UPDATE gr_courses SET locked = 1, submitted_at = COALESCE(submitted_at, datetime('now')), submitted_by = COALESCE(submitted_by, ?) WHERE id = ?").bind(user.id, id).run();
       if (!r.meta?.changes) fail(404, "ไม่พบรายวิชา");

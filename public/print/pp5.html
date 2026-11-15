@@ -17,7 +17,7 @@
 // ?term=1 = เล่มภาคเรียนที่ 1: ปก (สรุปคะแนนภาค 1) → โครงสร้างภาค 1 → เวลาเรียนภาค 1 → ตัวชี้วัดภาค 1 → สรุปผลภาค 1
 // ?term=2 (หรือไม่ระบุ) = เล่มภาคเรียนที่ 2 สรุปทั้งปี: ทุกส่วนข้างต้นของทั้งสองภาค + อ่านคิดฯ คุณลักษณะ และสรุปผลการเรียนทั้งปี
 import { fixed, esc, params, get, toolbar, status, fmt, td, gradeOut, thaiDateUtc, directorTitleHtml } from "/print/print.js";
-import { indicatorResult, effectiveScore, indicatorWord, ASSESSMENT_GROUPS, summarizeGroup, summaryText, NUMERIC_GRADES } from "/js/grading.js";
+import { indicatorResult, effectiveScore, indicatorWord, termFull, gradingMode, ASSESSMENT_GROUPS, summarizeGroup, summaryText, NUMERIC_GRADES } from "/js/grading.js";
 
 const q = params();
 const TERM = q.get("term") === "1" ? 1 : 2;
@@ -101,7 +101,7 @@ function book(d) {
   const t1Mean = t1Totals.length ? t1Totals.reduce((a, b) => a + b, 0) / t1Totals.length : null;
   const t1Pass = t1Done.filter((r) => !r.failed).length, t1Fail = t1Done.filter((r) => r.failed).length;
   const term1Cover = `<table class="t small">
-      <tr><th rowspan="2" style="width:20mm">จำนวน<br>นักเรียน<br>ทั้งหมด</th><th colspan="2">การกรอกคะแนน ภาค ${td(1)}</th><th colspan="3">คะแนนรวมภาค ${td(1)} (เต็ม ${td(50)})</th><th colspan="2">ผลการประเมิน${W} ภาค ${td(1)}</th></tr>
+      <tr><th rowspan="2" style="width:20mm">จำนวน<br>นักเรียน<br>ทั้งหมด</th><th colspan="2">การกรอกคะแนน ภาค ${td(1)}</th><th colspan="3">คะแนนรวมภาค ${td(1)} (เต็ม ${td(termFull(c.grading_mode))})</th><th colspan="2">ผลการประเมิน${W} ภาค ${td(1)}</th></tr>
       <tr><th>ครบ</th><th>ยังไม่ครบ</th><th>เฉลี่ย</th><th>สูงสุด</th><th>ต่ำสุด</th><th>ผ่านทุก${W}</th><th>มี${W}ไม่ผ่าน</th></tr>
       <tr><td class="c">${td(active.length)}</td><td class="c">${td(t1Done.length)}</td><td class="c">${td(active.length - t1Done.length)}</td>
         <td class="c">${t1Mean == null ? "–" : fixed(t1Mean, 2)}</td><td class="c">${t1Totals.length ? fmt(Math.max(...t1Totals)) : "–"}</td><td class="c">${t1Totals.length ? fmt(Math.min(...t1Totals)) : "–"}</td>
@@ -193,7 +193,7 @@ function book(d) {
   }).join("");
 
   // ---------- 7a. สรุปผลการประเมิน รายภาค ----------
-  const cT = c.collect_ratio / 2, fT = 50 - cT;
+  const TF = termFull(c.grading_mode), cT = c.collect_ratio * TF / 100, fT = TF - cT;
   const termSummary = terms.map((term) => {
     const inds = d.items.filter((i) => i.term_number === term && i.kind === "indicator");
     const fins = d.items.filter((i) => i.term_number === term && i.kind === "final");
@@ -204,7 +204,7 @@ function book(d) {
           <tr><th rowspan="2" style="width:10mm">เลขที่</th><th rowspan="2">ชื่อ–สกุล</th><th colspan="5">ระหว่างภาค</th><th colspan="3">สอบปลายภาค</th><th rowspan="2" style="width:16mm">รวม</th><th rowspan="2" style="width:20mm">สถานะ<br>นักเรียน</th></tr>
           <tr><th style="width:17mm">${W}</th><th style="width:15mm">กลางภาค</th><th style="width:15mm">แก้ตัว</th><th style="width:16mm">คะแนน<br>นับได้</th><th style="width:15mm">รวม</th>
             <th style="width:15mm">สอบ</th><th style="width:15mm">แก้ตัว</th><th style="width:15mm">รวม</th></tr>
-          <tr><th></th><th class="r">คะแนนเต็ม</th><th>${fmt(cT)}</th><th>${td(0)}</th><th>${td(0)}</th><th>${fmt(cT)}</th><th>${fmt(cT)}</th><th>${fmt(fT)}</th><th>${td(0)}</th><th>${fmt(fT)}</th><th>${td(50)}</th><th></th></tr>
+          <tr><th></th><th class="r">คะแนนเต็ม</th><th>${fmt(cT)}</th><th>${td(0)}</th><th>${td(0)}</th><th>${fmt(cT)}</th><th>${fmt(cT)}</th><th>${fmt(fT)}</th><th>${td(0)}</th><th>${fmt(fT)}</th><th>${td(TF)}</th><th></th></tr>
         </thead>
         <tbody>${d.students.map((x) => {
           const k = d.computed[x.id], t = k.term_scores?.[term], sc = d.scores[x.id] || {}, rem = d.remedials?.[x.id] || {};
@@ -229,17 +229,19 @@ function book(d) {
   }).join("");
 
   // ---------- 7b. สรุปผลการเรียนทั้งปี ----------
+  // ตัดเกรดรายภาค: แสดงเกรดของภาคต่อท้ายคะแนน เช่น 85 (4) · รวม = ค่าเฉลี่ย 2 ภาค
+  const termCell = (t) => !t || !t.complete ? "–" : fmt(t.total) + (gradingMode(c.grading_mode) === "term" && t.grade != null ? ` (${gradeOut(t.grade)})` : "");
   const yearSummary = `<section class="sheet">${mark}
     ${head("สรุปผลการเรียนรายวิชา")}
     <table class="t small fit${dense(false)}">
       <thead><tr><th style="width:10mm">เลขที่</th><th>ชื่อ–สกุล</th><th style="width:16mm">ภาค ${td(1)}</th><th style="width:16mm">ภาค ${td(2)}</th><th style="width:16mm">รวม</th>
         <th style="width:14mm">ผลการ<br>เรียน</th><th style="width:14mm">แก้ไข</th><th style="width:20mm">สถานะ</th></tr>
-        <tr><th></th><th class="r">คะแนนเต็ม</th><th>${td(50)}</th><th>${td(50)}</th><th>${td(100)}</th><th>${td("0–4")}</th><th>${td("0–4")}</th><th></th></tr></thead>
+        <tr><th></th><th class="r">คะแนนเต็ม</th><th>${td(termFull(c.grading_mode))}</th><th>${td(termFull(c.grading_mode))}</th><th>${td(100)}</th><th>${td("0–4")}</th><th>${td("0–4")}</th><th></th></tr></thead>
       <tbody>${d.students.map((x) => {
         const k = d.computed[x.id], r = d.results[x.id] || {};
         const t1 = k.term_scores?.[1], t2 = k.term_scores?.[2];
         return `<tr><td class="c">${td(x.number ?? "")}</td><td class="nm">${esc(x.name)}</td>
-          <td class="c">${t1 && t1.complete ? fmt(t1.total) : "–"}</td><td class="c">${t2 && t2.complete ? fmt(t2.total) : "–"}</td><td class="c">${k.total_max === 100 && k.total != null && !k.missing ? fmt(k.total) : "–"}</td>
+          <td class="c">${termCell(t1)}</td><td class="c">${termCell(t2)}</td><td class="c">${k.total_max === 100 && k.total != null && !k.missing ? fmt(k.total) : "–"}</td>
           <td class="c"><b>${k.original_grade == null ? "–" : gradeOut(k.original_grade)}</b></td><td class="c">${r.remedial_grade ? gradeOut(r.remedial_grade) : ""}</td><td class="c">${statusNote(x)}</td></tr>`;
       }).join("")}</tbody>
     </table>
