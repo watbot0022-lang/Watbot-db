@@ -261,7 +261,7 @@ async function downloadKind(kind, withData) {
       { email: "somsri@gmail.com", full_name: "นางสมศรี รักเรียน", position: "ครูชำนาญการ", role: "ครู", team: "ใช่", password: "" }],
     students: [{ student_code: "10101", name_prefix: "เด็กหญิง", first_name: "ตัวอย่าง", last_name: "นามสกุลตัวอย่าง", gender: "ญ", national_id: "1234567890123", birth_date: "31/05/2562", room: "ป.1/1",
       nationality: "ไทย", religion: "พุทธ", guardian_prefix: "นาง", guardian_first_name: "ผู้ปกครอง", guardian_last_name: "นามสกุลตัวอย่าง", guardian_relationship: "มารดา", guardian_phone: "0812345678", province: "ราชบุรี" }],
-    subjects: [{ grade_level: "ป.4", code: "ท14101", name: "ภาษาไทย", learning_area: "ภาษาไทย", subject_type: "พื้นฐาน", hours_per_year: 160, collect_ratio: 70 }],
+    subjects: [{ grade_level: "ป.4", code: "ท14101", name: "ภาษาไทย", learning_area: "ภาษาไทย", subject_type: "พื้นฐาน", hours_per_year: 160, collect_ratio: 70, grading_mode: "รายปี" }],
     teachers: [{ room: "ป.4/1", code: "ท14101", name: "ภาษาไทย", teachers: "นายสมชาย ใจดี" }],
     homerooms: [{ room: "ป.4/1", teachers: "นายสมชาย ใจดี, นางสมศรี รักเรียน" }],
     bank: [{ grade_level: "ป.4", learning_area: "ภาษาไทย", subject_code: "", kind: "ระหว่างทาง", code: "ท 1.1 ป.4/1", title: "อ่านออกเสียงบทร้อยแก้วและบทร้อยกรองได้ถูกต้อง" }],
@@ -277,7 +277,7 @@ async function downloadKind(kind, withData) {
     rows = pick((await api("/api/admin/indicator-bank/export")).rows);
   } else if (kind === "subjects") {
     const { subjects } = await api(`/api/admin/subjects?${yq}`);
-    rows = subjects.map((s) => [s.grade_level, s.code, s.name, s.learning_area, s.subject_type === "additional" ? "เพิ่มเติม" : "พื้นฐาน", s.hours_per_year, s.collect_ratio]);
+    rows = subjects.map((s) => [s.grade_level, s.code, s.name, s.learning_area, s.subject_type === "additional" ? "เพิ่มเติม" : "พื้นฐาน", s.hours_per_year, s.collect_ratio, s.grading_mode === "term" ? "รายภาค" : "รายปี"]);
   } else if (kind === "teachers") {
     const [{ courses }, { settings }] = await Promise.all([api(`/api/admin/courses?${yq}`), api(`/api/admin/settings?${yq}`)]);
     rows = courses.filter((c) => !settings.pilot_rooms || settings.pilot_rooms.includes(`${c.grade_level}/${c.classroom}`))
@@ -299,19 +299,24 @@ const RATIOS = [50, 60, 70, 75, 80, 90, 100];
 const perTerm = (r) => `ภาคละ ${String(r / 2).replace(/\.0$/, "")} + ${String(50 - r / 2).replace(/\.0$/, "")}`;
 const ratioOptions = (cur) => [...new Set([...RATIOS, Number(cur)])].sort((a, b) => a - b)
   .map((r) => `<option value="${r}" ${r === Number(cur) ? "selected" : ""}>${r}:${100 - r}${r === 100 ? " (ไม่มีสอบปลายภาค)" : ""}</option>`).join("");
+// รูปแบบการตัดเกรด (ฝ่ายวัดผลกำหนดรายวิชา ใช้กับทุกห้อง): รายปี ภาคละ 50 · รายภาค ภาคละ 100
+const MODES = [["year", "รายปี"], ["term", "รายภาค"]];
+const modeOptions = (cur) => MODES.map(([v, l]) => `<option value="${v}" ${(cur || "year") === v ? "selected" : ""}>${l}</option>`).join("");
 async function renderSubjects() {
   const [{ subjects, learning_areas }, { settings: st }] = await Promise.all([api(`/api/admin/subjects?${yq}`), api(`/api/admin/settings?${yq}`)]);
   const defaultRatio = st.collect_ratio;
   view.innerHTML = `<div class="panel">
     <div class="panel-head"><h2>รายวิชาปีการศึกษา ${me.year.year_be}</h2><button class="btn primary" id="addSub">เพิ่มรายวิชา</button></div>
-    <p class="muted small" style="margin-top:0">สัดส่วนคะแนนตั้งแยกรายวิชาได้ เช่น วิชาภาคปฏิบัติ 80:20 = แต่ละภาค ระหว่างภาค 40 + ปลายภาค 10 · เปลี่ยนแล้วครูต้องปรับคะแนนเต็มในโครงสร้างให้ตรงสัดส่วนใหม่ก่อนส่งผล</p>
+    <p class="muted small" style="margin-top:0">สัดส่วนคะแนนตั้งแยกรายวิชาได้ เช่น วิชาภาคปฏิบัติ 80:20 = แต่ละภาค ระหว่างภาค 40 + ปลายภาค 10 · เปลี่ยนแล้วครูต้องปรับคะแนนเต็มในโครงสร้างให้ตรงสัดส่วนใหม่ก่อนส่งผล
+      · ตัดเกรด<b>รายปี</b> = ภาคละ 50 รวม 2 ภาคตัดเกรดครั้งเดียว · <b>รายภาค</b> = ภาคละ 100 ตัดเกรดแยกภาค ผลทั้งปีใช้ค่าเฉลี่ย 2 ภาค (ฝ่ายวัดผลกำหนด ครูเปลี่ยนเองไม่ได้)</p>
     ${GRADES.map((g) => { const list = subjects.filter((s) => s.grade_level === g); return list.length ? `
       <h3 style="margin-top:18px">${g}</h3>
-      <div class="table-wrap"><table class="list"><thead><tr><th>รหัส</th><th>ชื่อวิชา</th><th>กลุ่มสาระ</th><th>ประเภท</th><th class="num">ชม./ปี</th><th>ระหว่างภาค : ปลายภาค</th><th class="num">ห้อง</th><th></th></tr></thead>
+      <div class="table-wrap"><table class="list"><thead><tr><th>รหัส</th><th>ชื่อวิชา</th><th>กลุ่มสาระ</th><th>ประเภท</th><th class="num">ชม./ปี</th><th>ระหว่างภาค : ปลายภาค</th><th>ตัดเกรด</th><th class="num">ห้อง</th><th></th></tr></thead>
       <tbody>${list.map((s) => `<tr><td>${esc(s.code)}</td><td>${esc(s.name)}</td><td class="small">${esc(s.learning_area)}</td><td>${s.subject_type === "basic" ? "พื้นฐาน" : "เพิ่มเติม"}</td>
         <td class="num">${s.hours_per_year}</td>
         <td><select class="ratio-sel" data-ratio="${s.id}" aria-label="สัดส่วนคะแนน ${esc(s.code)}" ${s.locked_count ? 'disabled title="มีห้องที่ส่งผลแล้ว ส่งคืนก่อนจึงเปลี่ยนได้"' : ""}>${ratioOptions(s.collect_ratio)}</select>
-          <span class="small muted">${perTerm(s.collect_ratio)}</span></td><td class="num">${s.course_count}</td>
+          <span class="small muted">${perTerm(s.collect_ratio)}</span></td>
+        <td><select data-mode="${s.id}" aria-label="รูปแบบการตัดเกรด ${esc(s.code)}" ${s.locked_count ? 'disabled title="มีห้องที่ส่งผลแล้ว ส่งคืนก่อนจึงเปลี่ยนได้"' : ""}>${modeOptions(s.grading_mode)}</select></td><td class="num">${s.course_count}</td>
         <td class="actions"><button class="btn small" data-edit="${s.id}">แก้ไข</button><button class="btn small danger" data-del="${s.id}">ลบ</button></td></tr>`).join("")}</tbody></table></div>` : ""; }).join("") || `<div class="empty"><strong>ยังไม่มีรายวิชา</strong>เริ่มจากเมนู "เริ่มต้นปีการศึกษา" หรือกดเพิ่มรายวิชา</div>`}
   </div>`;
   const form = (s = {}) => `<div class="form-grid">
@@ -324,6 +329,7 @@ async function renderSubjects() {
     <label class="field">กลุ่มสาระ<select name="learning_area">${[...learning_areas, "อื่น ๆ"].map((a) => `<option ${s.learning_area === a ? "selected" : ""}>${a}</option>`).join("")}</select></label>
     <label class="field">เวลาเรียน (ชม./ปี)<input name="hours_per_year" inputmode="numeric" required value="${s.hours_per_year ?? 40}"></label>
     <label class="field">ระหว่างภาค : ปลายภาค<select name="collect_ratio">${ratioOptions(s.collect_ratio ?? defaultRatio)}</select></label>
+    <label class="field">รูปแบบการตัดเกรด<select name="grading_mode">${modeOptions(s.grading_mode)}</select></label>
     <label class="field">ลำดับในรายงาน<input name="sort_order" inputmode="numeric" value="${s.sort_order ?? ""}" placeholder="ว่าง = ต่อท้ายวิชาของชั้นนี้"></label>
   </div>
   ${s.id && s.course_count ? '<p class="note warn" style="margin-top:12px">แก้สัดส่วนหรือเวลาเรียนแล้ว ผลการเรียนของทุกห้องจะคำนวณใหม่ตามค่าใหม่ทันที</p>' : ""}`;
@@ -347,6 +353,16 @@ async function renderSubjects() {
       await api(`/api/admin/subjects/${s.id}`, { method: "PUT", body: { grade_level: s.grade_level, code: s.code, name: s.name, learning_area: s.learning_area, subject_type: s.subject_type, hours_per_year: s.hours_per_year, collect_ratio: r, sort_order: s.sort_order } });
       toast(`ตั้ง ${s.code} เป็น ${r}:${100 - r} แล้ว`); render();
     } catch (err) { sel.value = s.collect_ratio; showError(err); }
+  };
+  for (const sel of view.querySelectorAll("[data-mode]")) sel.onchange = async () => {
+    const s = subjects.find((x) => x.id === Number(sel.dataset.mode));
+    const m = sel.value, label = MODES.find(([v]) => v === m)[1], full = m === "term" ? 100 : 50;
+    const warn = s.structured_count ? `<br><br><b>${s.structured_count} ห้องตั้งโครงสร้างคะแนนไว้แล้ว</b> ครูต้องปรับคะแนนเต็มให้รวมได้ภาคละ ${full} ก่อนจึงส่งผลได้ (ระบบไม่ย่อขยายคะแนนให้)` : "";
+    if (!(await confirmBox("เปลี่ยนรูปแบบการตัดเกรด", `${esc(s.code)} ${esc(s.name)} ${esc(s.grade_level)}: ตัดเกรด<b>${label}</b> (ภาคละ ${full} คะแนน) ทุกห้อง${warn}`, "เปลี่ยน"))) { sel.value = s.grading_mode || "year"; return; }
+    try {
+      await api(`/api/admin/subjects/${s.id}`, { method: "PUT", body: { grade_level: s.grade_level, code: s.code, name: s.name, learning_area: s.learning_area, subject_type: s.subject_type, hours_per_year: s.hours_per_year, collect_ratio: s.collect_ratio, sort_order: s.sort_order, grading_mode: m } });
+      toast(`ตั้ง ${s.code} เป็นตัดเกรด${label}แล้ว`); render();
+    } catch (err) { sel.value = s.grading_mode || "year"; showError(err); }
   };
   for (const b of view.querySelectorAll("[data-del]")) b.onclick = async () => {
     const s = subjects.find((x) => x.id === Number(b.dataset.del));

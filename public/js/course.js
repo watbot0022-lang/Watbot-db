@@ -707,8 +707,7 @@ function renderSetup() {
   view.innerHTML = `
     <div class="panel">
       <div class="panel-head"><h2>สัดส่วนคะแนนต่อภาคเรียน</h2>
-        <label class="small" style="display:flex;gap:6px;align-items:center">รูปแบบการตัดเกรด
-          <select id="gradingMode" ${can ? "" : "disabled"}>${Object.entries(GRADING_MODES).map(([k, l]) => `<option value="${k}" ${gradingMode(c.grading_mode) === k ? "selected" : ""}>${l}</option>`).join("")}</select></label></div>
+        <span class="tag" title="ฝ่ายวัดผลเป็นผู้กำหนดรูปแบบการตัดเกรดของรายวิชา">${GRADING_MODES[gradingMode(c.grading_mode)]} (ฝ่ายวัดผลกำหนด)</span></div>
       <div class="ratio-bar"><span class="c" style="width:${c.collect_ratio}%">ระหว่างภาค ${fmt(cT)}</span><span class="f" style="width:${100 - c.collect_ratio}%">ปลายภาค ${fmt(fT)}</span></div>
       <p class="muted small">${isTermMode() ? "ตัดเกรดรายภาค: แต่ละภาคเต็ม 100 คะแนน ตัดเกรดแยกแต่ละภาค · ผลทั้งปี = ค่าเฉลี่ย 2 ภาค" : "ตัดเกรดรายปี: แต่ละภาคเต็ม 50 คะแนน (ทั้งปี 100) ตัดเกรดครั้งเดียวปลายปี"} · คะแนนเต็มของ${W}รวมกันต้องเท่ากับ ${fmt(cT)} และสอบปลายภาครวม ${fmt(fT)} พอดี
         ระบบใช้คะแนนจริงตามที่กรอก ไม่ย่อขยายและไม่ปัดเศษ · ฝ่ายวิชาการเป็นผู้กำหนดสัดส่วนของแต่ละวิชา</p>
@@ -728,15 +727,6 @@ function renderSetup() {
       <button class="btn" id="pushBtn" ${data.items.some((i) => i.term_number === T) ? "" : "disabled"}>${ICONS.copy} เลือกห้อง</button></div>
       <p class="muted small" id="pushInfo" style="margin:0"></p></div>` : ""}`;
   for (const b of view.querySelectorAll("[data-build]")) b.onclick = () => openBuilder(Number(b.dataset.build));
-  const gm = document.getElementById("gradingMode");
-  if (gm) gm.onchange = async () => {
-    const mode = gm.value, label = GRADING_MODES[mode];
-    const msg = mode === "term" ? "ตัดเกรดรายภาค: แต่ละภาคเต็ม 100 คะแนน ตัดเกรดแยกภาค และผลทั้งปีใช้ค่าเฉลี่ย 2 ภาค — คะแนนเต็มของช่องคะแนนเดิมต้องปรับให้รวมได้ 100 ต่อภาค"
-      : "ตัดเกรดรายปี: แต่ละภาคเต็ม 50 คะแนน รวม 2 ภาคเต็ม 100 ตัดเกรดครั้งเดียว — คะแนนเต็มของช่องคะแนนเดิมต้องปรับให้รวมได้ 50 ต่อภาค";
-    if (!(await confirmBox(`เปลี่ยนเป็น${label}?`, msg))) { gm.value = gradingMode(data.course.grading_mode); return; }
-    try { data = await api(`/api/courses/${courseId}/grading-mode`, { method: "PUT", body: { mode } }); toast(`เปลี่ยนเป็น${label}แล้ว`); renderHeader(); render(); }
-    catch (err) { gm.value = gradingMode(data.course.grading_mode); showError(err); }
-  };
   for (const b of view.querySelectorAll("[data-tpl]")) b.onclick = () => applyTemplate(Number(b.dataset.tpl));
   const ts = document.getElementById("tplSave"), td = document.getElementById("tplDel");
   if (ts) ts.onclick = saveTemplate;
