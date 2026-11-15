@@ -5,13 +5,15 @@ import { extname, join, normalize } from "node:path";
 import worker from "../src/index.js";
 import { createD1, loadBaseSchema } from "./d1-shim.mjs";
 import { seed } from "./seed.mjs";
+import { ensureSchema } from "../src/lib/schema.js";
 
 const PUBLIC = new URL("../public/", import.meta.url).pathname;
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
   ".jpg": "image/jpeg", ".png": "image/png", ".svg": "image/svg+xml", ".ttf": "font/ttf", ".json": "application/json", ".ico": "image/x-icon" };
 
 // fresh: ฐานข้อมูลว่างแบบติดตั้งใหม่ (ระบบสร้างตารางเอง) · ไม่ระบุ: ข้อมูลตัวอย่างสำหรับทดสอบ
-export async function makeEnv({ fresh = false } = {}) {
+// legacyYearMode: สำหรับชุดทดสอบเดิมที่เขียนบนโครงสร้างภาคละ 50 — ทุกวิชาเป็นตัดเกรดรายปี
+export async function makeEnv({ fresh = false, legacyYearMode = false } = {}) {
   const DB = createD1();
   if (!fresh) {
     loadBaseSchema(DB);
@@ -31,7 +33,14 @@ export async function makeEnv({ fresh = false } = {}) {
       return new Response(await readFile(file), { headers: { "Content-Type": TYPES[extname(file)] || "application/octet-stream" } });
     },
   };
-  return { DB, ASSETS, JWT_SECRET: "dev-secret-for-local-testing-only" };
+  const env = { DB, ASSETS, JWT_SECRET: "dev-secret-for-local-testing-only" };
+  if (legacyYearMode) {
+    await ensureSchema(env);
+    await DB.prepare("UPDATE gr_subjects SET grading_mode = 'year'").run();
+    await DB.prepare(`CREATE TRIGGER IF NOT EXISTS test_legacy_year AFTER INSERT ON gr_subjects
+      BEGIN UPDATE gr_subjects SET grading_mode = 'year' WHERE id = NEW.id; END`).run();
+  }
+  return env;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

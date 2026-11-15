@@ -49,16 +49,18 @@ test("API: ฝ่ายวัดผลกำหนดรูปแบบการ
   const course = courses.find((c) => !c.locked) || courses[0];
   assert.ok(course);
   const id = course.id;
-  assert.equal((await call("GET", `/api/courses/${id}`)).data.course.grading_mode, "year");
+  // ค่าเริ่มต้น: รายภาค ภาคละ 100 · 70:30
+  assert.equal((await call("GET", `/api/courses/${id}`)).data.course.grading_mode, "term");
+  assert.equal((await call("GET", `/api/courses/${id}`)).data.course.collect_ratio, 70);
   // ครูเปลี่ยนเองไม่ได้แล้ว (ไม่มีช่องทางในรายวิชาของห้อง)
   assert.notEqual((await call("PUT", `/api/courses/${id}/grading-mode`, { mode: "term" })).status, 200);
   const { data: { subjects } } = await call("GET", "/api/admin/subjects");
   const sub = subjects.find((x) => x.id === course.subject_id);
   const body = { grade_level: sub.grade_level, code: sub.code, name: sub.name, learning_area: sub.learning_area, subject_type: sub.subject_type, hours_per_year: sub.hours_per_year, collect_ratio: sub.collect_ratio, sort_order: sub.sort_order };
   assert.equal((await call("PUT", `/api/admin/subjects/${sub.id}`, { ...body, grading_mode: "x" })).status, 400);
-  assert.equal((await call("PUT", `/api/admin/subjects/${sub.id}`, { ...body, grading_mode: "term" })).status, 200);
-  assert.equal((await call("GET", `/api/courses/${id}`)).data.course.grading_mode, "term");
+  assert.equal((await call("PUT", `/api/admin/subjects/${sub.id}`, { ...body, grading_mode: "year" })).status, 200);
+  assert.equal((await call("GET", `/api/courses/${id}`)).data.course.grading_mode, "year");
   // แก้วิชาโดยไม่ส่ง grading_mode (เช่น เปลี่ยนสัดส่วน) = คงค่าเดิม
   assert.equal((await call("PUT", `/api/admin/subjects/${sub.id}`, body)).status, 200);
-  assert.equal((await call("GET", `/api/courses/${id}`)).data.course.grading_mode, "term");
+  assert.equal((await call("GET", `/api/courses/${id}`)).data.course.grading_mode, "year");
 });

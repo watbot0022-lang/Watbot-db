@@ -47,7 +47,7 @@ function cleanSubject(body, settings) {
   const rawSort = body.sort_order;
   const sort = rawSort === "" || rawSort == null ? null : Number(rawSort);
   if (sort != null && (!Number.isInteger(sort) || sort < 0 || sort > 9999)) fail(400, "ลำดับในรายงานต้องเป็นจำนวนเต็ม 0–9999");
-  // รูปแบบการตัดเกรด: ว่าง = คงค่าเดิม (วิชาใหม่ = รายปี)
+  // รูปแบบการตัดเกรด: ว่าง = คงค่าเดิม (วิชาใหม่ = รายภาค ภาคละ 100)
   const rawMode = text(body.grading_mode, 20);
   const mode = !rawMode ? null : ["term", "รายภาค"].includes(rawMode) ? "term" : ["year", "รายปี"].includes(rawMode) ? "year" : fail(400, "รูปแบบการตัดเกรดต้องเป็นรายภาคหรือรายปี");
   return { grade, code, name, area, type, hours, ratio, sort, mode };
@@ -202,7 +202,7 @@ export async function handleAdmin(request, env, user, parts, method, url) {
       const summary = { add: plan.filter((s) => !have.has(`${s.grade}|${s.code}`)).length, update: plan.filter((s) => have.has(`${s.grade}|${s.code}`)).length };
       if (b.dry_run || errors.length) return json({ ok: !errors.length, dry_run: true, errors, summary, preview: plan });
       await batchAll(env, plan.map((s) => env.DB.prepare(`INSERT INTO gr_subjects (academic_year_id, grade_level, code, name, learning_area, subject_type, hours_per_year, collect_ratio, sort_order, grading_mode)
-        VALUES (?,?,?,?,?,?,?,?,?, COALESCE(?, 'year')) ON CONFLICT(academic_year_id, grade_level, code) DO UPDATE SET name=excluded.name, learning_area=excluded.learning_area,
+        VALUES (?,?,?,?,?,?,?,?,?, COALESCE(?, 'term')) ON CONFLICT(academic_year_id, grade_level, code) DO UPDATE SET name=excluded.name, learning_area=excluded.learning_area,
         subject_type=excluded.subject_type, hours_per_year=excluded.hours_per_year, collect_ratio=excluded.collect_ratio, sort_order=excluded.sort_order,
         grading_mode=CASE WHEN ? IS NULL THEN gr_subjects.grading_mode ELSE excluded.grading_mode END`)
         .bind(year.id, s.grade, s.code, s.name, s.area, s.type, s.hours, s.ratio, s.sort, s.mode, s.mode)));
@@ -294,8 +294,8 @@ export async function handleAdmin(request, env, user, parts, method, url) {
         const digit = g.slice(-1);
         const base = (await nextSubjectSort(env, year.id, g)) - 10; // ชั้นที่มีวิชาอยู่แล้ว → วิชาพื้นฐานที่เพิ่มต่อท้าย ไม่แทรกกลาง
         BASIC_TEMPLATE.forEach((t, i) => {
-          stmts.push(env.DB.prepare(`INSERT OR IGNORE INTO gr_subjects (academic_year_id, grade_level, code, name, learning_area, subject_type, hours_per_year, collect_ratio, sort_order)
-            VALUES (?,?,?,?,?, 'basic', ?, ?, ?)`).bind(year.id, g, `${t.p}1${digit}${t.n}`, t.name, LEARNING_AREAS[t.area],
+          stmts.push(env.DB.prepare(`INSERT OR IGNORE INTO gr_subjects (academic_year_id, grade_level, code, name, learning_area, subject_type, hours_per_year, collect_ratio, sort_order, grading_mode)
+            VALUES (?,?,?,?,?, 'basic', ?, ?, ?, 'term')`).bind(year.id, g, `${t.p}1${digit}${t.n}`, t.name, LEARNING_AREAS[t.area],
             Number(digit) <= 3 ? t.lower : t.upper, settings.collect_ratio, base + (i + 1) * 10));
         });
       }
@@ -311,7 +311,7 @@ export async function handleAdmin(request, env, user, parts, method, url) {
       if (s.sort == null) s.sort = await nextSubjectSort(env, year.id, s.grade);
       try {
         const r = await env.DB.prepare(`INSERT INTO gr_subjects (academic_year_id, grade_level, code, name, learning_area, subject_type, hours_per_year, collect_ratio, sort_order, grading_mode)
-          VALUES (?,?,?,?,?,?,?,?,?,?)`).bind(year.id, s.grade, s.code, s.name, s.area, s.type, s.hours, s.ratio, s.sort, s.mode || "year").run();
+          VALUES (?,?,?,?,?,?,?,?,?,?)`).bind(year.id, s.grade, s.code, s.name, s.area, s.type, s.hours, s.ratio, s.sort, s.mode || "term").run();
         await syncCourses(env, year.id, [r.meta.last_row_id]);
         await audit(env, user, "subject.create", { id: r.meta.last_row_id, ...s });
         return json({ ok: true, id: r.meta.last_row_id });
