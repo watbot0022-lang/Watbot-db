@@ -73,6 +73,13 @@ export function effectiveScore(item, score, remedial, settings) {
 }
 const near = (a, b) => Math.abs(a - b) < 1e-9;
 
+// รูปแบบการตัดเกรดของรายวิชา (ตั้งในแท็บโครงสร้างคะแนน)
+// year (ค่าเริ่มต้น) = รายปี: ภาคละ 50 รวม 2 ภาคเต็ม 100 ตัดเกรดครั้งเดียวปลายปี
+// term = รายภาค: ภาคละ 100 ตัดเกรดแยกแต่ละภาค · ผลทั้งปี = ค่าเฉลี่ยคะแนน 2 ภาค (เต็ม 100) ตัดเกรดอีกครั้ง
+export const GRADING_MODES = { year: "ตัดเกรดรายปี", term: "ตัดเกรดรายภาค" };
+export const gradingMode = (m) => (m === "term" ? "term" : "year");
+export const termFull = (m) => (gradingMode(m) === "term" ? 100 : 50);
+
 /**
  * คำนวณผลการเรียนของนักเรียน 1 คนใน 1 รายวิชา (ทั้งปี)
  * items: [{id, kind:'indicator'|'final', max_score, term_number}]
@@ -102,6 +109,7 @@ export function computeStudentResult(items, scores, result, settings, remedials,
     return effectiveScore(item, raw, rem, settings);
   };
   const ratio = Math.min(100, Math.max(0, Number(settings.collect_ratio ?? 70)));
+  const termMode = gradingMode(settings.grading_mode) === "term", TF = termFull(settings.grading_mode);
   const yearly = items.some((i) => Number(i.term_number) !== 1 && Number(i.term_number) !== 2);
   const failedIndicators = [];
   let missing = 0;
@@ -121,7 +129,7 @@ export function computeStudentResult(items, scores, result, settings, remedials,
     }
   }
 
-  // แปลงคะแนนของแต่ละก้อนให้อยู่ในสัดส่วน (full = 50 ต่อภาค หรือ 100 ทั้งปี)
+  // แปลงคะแนนของแต่ละก้อนให้อยู่ในสัดส่วน (full = 50 ต่อภาค [รายภาค 100] หรือ 100 ทั้งปี)
   let exact = true;
   const part = (b, full) => {
     const cTarget = ratio * full / 100, fTarget = full - cTarget;
@@ -147,17 +155,24 @@ export function computeStudentResult(items, scores, result, settings, remedials,
   } else {
     for (const t of [1, 2]) if (carried(t)) {
       const c = carried(t), n = (v) => v == null || v === "" ? null : Number(v);
-      term_scores[t] = { collect: n(c.collect), final: n(c.final), total: Number(c.total), collect_max: null, final_max: null, max: 50,
+      term_scores[t] = { collect: n(c.collect), final: n(c.final), total: Number(c.total), collect_max: null, final_max: null, max: TF,
         missing: 0, complete: true, exact: true, carried: true };
       total = sum2(total ?? 0, term_scores[t].total);
       collectScaled = sum2(collectScaled, term_scores[t].collect ?? 0);
       finalScaled = sum2(finalScaled, term_scores[t].final ?? 0);
     } else if (per[t]) {
-      term_scores[t] = part(per[t], 50);
+      term_scores[t] = part(per[t], TF);
       total = sum2(total ?? 0, term_scores[t].total);
       collectScaled = sum2(collectScaled, term_scores[t].collect);
       finalScaled = sum2(finalScaled, term_scores[t].final);
     }
+  }
+  // รายภาค: เกรดของแต่ละภาค · ผลรวมทั้งปี = ค่าเฉลี่ย 2 ภาค (หารสอง ตัดทศนิยมตำแหน่งที่ 3 ทิ้ง ไม่ปัด)
+  if (termMode && !yearly) {
+    for (const x of Object.values(term_scores)) x.grade = x.complete ? gradeFromTotal(x.total) : (settings.finalized ? "ร" : null);
+    const half = (v) => floor2(v / 2);
+    total = term_scores[1] && term_scores[2] ? half(total) : null; // ยังไม่ครบ 2 ภาค = ยังไม่มีคะแนนทั้งปี
+    collectScaled = half(collectScaled); finalScaled = half(finalScaled);
   }
   const bothTerms = yearly || ((!!per[1] || !!carried(1)) && (!!per[2] || !!carried(2)));
   const hasItems = (items.length > 0 && Object.values(per).some((b) => b.collectMax + b.finalMax > 0)) || (!yearly && !!(carried(1) || carried(2)));
@@ -195,7 +210,7 @@ export function computeStudentResult(items, scores, result, settings, remedials,
     collect_raw: raw("collect"), collect_max: raw("collectMax"),
     final_raw: raw("final"), final_max: raw("finalMax"),
     collect_scaled: hasItems ? collectScaled : 0, final_scaled: hasItems ? finalScaled : 0,
-    exact, total: hasItems ? total : null, total_max: yearly ? 100 : Object.keys(term_scores).length * 50,
+    exact, total: hasItems ? total : null, total_max: yearly || termMode ? 100 : Object.keys(term_scores).length * 50,
     missing, term_scores, hours, need_hours: needHours, low_attendance: lowAttendance,
     original_grade: original, reason, grade: finalGrade, remedial_stale: remedialStale, carried_terms: yearly ? [] : [1, 2].filter((t) => carried(t)),
     failed_indicators: failedIndicators, remediated,
@@ -214,7 +229,8 @@ export function resultWithAttendance(result, rate, hoursPerYear) {
 
 // ตรวจโครงสร้างคะแนนก่อนยืนยันผล: คะแนนเต็มของแต่ละภาคต้องตรงสัดส่วน (เช่น 35 + 15 = 50)
 // เพื่อไม่ให้ระบบต้องย่อขยายคะแนน (ซึ่งทำให้เกิดทศนิยมเอง)
-export function structureIssues(items, collectRatio, word = "ตัวชี้วัด") {
+export function structureIssues(items, collectRatio, word = "ตัวชี้วัด", mode) {
+  const TF = termFull(mode);
   const ratio = Number(collectRatio ?? 70);
   if (!items.length) return ["ยังไม่ได้ตั้งโครงสร้างคะแนน"];
   const issues = [];
@@ -222,10 +238,10 @@ export function structureIssues(items, collectRatio, word = "ตัวชี้�
   for (const t of [1, 2]) {
     const list = items.filter((i) => Number(i.term_number) === t);
     if (!list.length) continue;
-    const c = sum(list, false), f = sum(list, true), cT = ratio / 2, fT = 50 - cT;
+    const c = sum(list, false), f = sum(list, true), cT = ratio * TF / 100, fT = TF - cT;
     if (f > 0 && !near(c, cT)) issues.push(`ภาค ${t}: คะแนนเต็ม${word}รวม ${c} ต้องเท่ากับคะแนนระหว่างภาค ${cT}`);
     if (f > 0 && !near(f, fT)) issues.push(`ภาค ${t}: คะแนนเต็มสอบปลายภาค ${f} ต้องเท่ากับ ${fT}`);
-    if (f === 0 && !near(c, 50)) issues.push(`ภาค ${t}: ไม่มีสอบปลายภาค คะแนนเต็ม${word}รวม ${c} ต้องเท่ากับ 50`);
+    if (f === 0 && !near(c, TF)) issues.push(`ภาค ${t}: ไม่มีสอบปลายภาค คะแนนเต็ม${word}รวม ${c} ต้องเท่ากับ ${TF}`);
   }
   return issues;
 }

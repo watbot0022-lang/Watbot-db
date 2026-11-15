@@ -12,7 +12,7 @@ function serializeBundle(b, user) {
     edit_request: b.edit_request || null,
     edits: b.edits || [],
     can_approve: ADMIN_ROLES.includes(user.role),
-    structure_issues: structureIssues(b.items, b.course.collect_ratio, indicatorWord(b.course.grade_level)),
+    structure_issues: structureIssues(b.items, b.course.collect_ratio, indicatorWord(b.course.grade_level), b.course.grading_mode),
     assessments: b.assessments || {},
     settings: b.settings,
     items: b.items,
@@ -449,6 +449,18 @@ async function handleCoursesInner(request, env, user, parts, method, url) {
     return json(serializeBundle(await courseBundle(env, course), user));
   }
 
+  // ---------- รูปแบบการตัดเกรด: year = รายปี (ภาคละ 50) · term = รายภาค (ภาคละ 100) ----------
+  if (sub === "grading-mode" && method === "PUT") {
+    const course = await assertCourseAccess(env, user, id, { write: true });
+    const b = await readJson(request);
+    if (!["year", "term"].includes(b.mode)) fail(400, "รูปแบบการตัดเกรดต้องเป็นรายภาคหรือรายปี");
+    if ((course.grading_mode || "year") !== b.mode) {
+      await env.DB.prepare("UPDATE gr_courses SET grading_mode = ?, data_rev = data_rev + 1 WHERE id = ?").bind(b.mode, course.id).run();
+      await audit(env, user, "course.grading_mode", { course: course.id, from: course.grading_mode || "year", to: b.mode });
+    }
+    return json(serializeBundle(await courseBundle(env, await loadCourse(env, course.id)), user));
+  }
+
   // ---------- หน่วยการเรียนรู้ ----------
   if (sub === "units" && method === "POST") {
     const course = await assertCourseAccess(env, user, id, { write: true });
@@ -667,7 +679,7 @@ async function handleCoursesInner(request, env, user, parts, method, url) {
     const course = await assertCourseAccess(env, user, id, { write: true });
     const bundle = await courseBundle(env, course);
     if (!bundle.items.length) fail(400, "ยังไม่ได้ตั้งโครงสร้างคะแนน");
-    const issues = structureIssues(bundle.items, course.collect_ratio, indicatorWord(course.grade_level));
+    const issues = structureIssues(bundle.items, course.collect_ratio, indicatorWord(course.grade_level), course.grading_mode);
     if (issues.length) return json({ error: `ยืนยันผลไม่ได้: ${issues.join(" และ ")}`, structure_issues: issues }, 400);
     const b = await readJson(request);
     // ผลการเรียนคิดจาก 2 ภาค: ภาคที่ยังไม่มีช่องคะแนนและนักเรียนไม่มีคะแนนยกมา → ส่งแล้วเกรดจะยังเป็น "-" (เช่น ห้องนำร่องที่ภาค 1 อยู่ใน Q-Info)
