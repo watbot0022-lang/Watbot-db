@@ -1,12 +1,14 @@
 import BANK_2569 from "../data/indicator-bank-2569.js";
 import BANK_2569_P13 from "../data/indicator-bank-2569-p13.js";
 import BANK_2569_KINDER from "../data/indicator-bank-2569-kinder.js";
+import { curriculumActivities } from "../data/activities-curriculum.js";
+import { DEFAULT_ACTIVITIES } from "../../public/js/grading.js";
 // ตารางของระบบรายงานผลการเรียน — ขึ้นต้นด้วย gr_ ทั้งหมด เพื่อไม่ชนกับตารางเดิมของ banpadeng-school-db
 // สร้างอัตโนมัติครั้งแรกที่ Worker ทำงาน (CREATE ... IF NOT EXISTS ไม่แตะข้อมูลเดิม)
 // ตั้งใจไม่ใส่ FOREIGN KEY ไปยังตารางของระบบบริหารโรงเรียน (users, students, academic_years)
 // เพื่อไม่ให้การลบผู้ใช้/นักเรียนในระบบนั้นล้มเหลวเพราะติดข้อมูลของระบบนี้
 
-export const SCHEMA_VERSION = "wb-7"; // wb-7 = กิจกรรมพัฒนาผู้เรียน + ตัวชี้วัด ฝ่ายวัดผลกำหนดรายปี/ชั้น (gr_activities) · wb-6 = ค่าเริ่มต้นตัดเกรดรายภาค ภาคละ 100 70:30 + ปรับวิชาเดิมครั้งเดียว · wb-5 = gr_subjects.grading_mode ฝ่ายวัดผลกำหนดรายวิชา (wb-4 gr_courses.grading_mode เลิกใช้) · wb-2 = ตาราง gr-22 ของป่าเด็ง (gr_guard, data_rev) · wb-3 = gr-23 กิจกรรมรายภาค
+export const SCHEMA_VERSION = "wb-8"; // wb-8 = กิจกรรม/ตัวชี้วัดตามหลักสูตรโรงเรียน 2568 แทน 4 กิจกรรมเริ่มต้นที่ยังไม่ถูกแก้ · wb-7 = กิจกรรมพัฒนาผู้เรียน + ตัวชี้วัด ฝ่ายวัดผลกำหนดรายปี/ชั้น (gr_activities) · wb-6 = ค่าเริ่มต้นตัดเกรดรายภาค ภาคละ 100 70:30 + ปรับวิชาเดิมครั้งเดียว · wb-5 = gr_subjects.grading_mode ฝ่ายวัดผลกำหนดรายวิชา (wb-4 gr_courses.grading_mode เลิกใช้) · wb-2 = ตาราง gr-22 ของป่าเด็ง (gr_guard, data_rev) · wb-3 = gr-23 กิจกรรมรายภาค
 
 // ตารางพื้นฐาน (ป่าเด็งใช้ร่วมกับระบบทะเบียน banpadeng-school-db) — วัดโบสถ์ทำงานเดี่ยว ระบบจึงสร้างเอง
 export const CORE_SQL = [
@@ -426,6 +428,30 @@ export async function migrateActivityTerms(env) {
 
 const ensured = new WeakMap();
 
+// ครั้งเดียว: ปี/ชั้นที่ยังเป็น 4 กิจกรรมเริ่มต้นเดิม (ชื่อเดิม ไม่มีตัวชี้วัด) → ชื่อและตัวชี้วัดตามหลักสูตรโรงเรียน 2568
+// คีย์กิจกรรมคงเดิม ผลที่บันทึกไว้ (เวลาเรียน) ยังอยู่ · ชั้นที่ฝ่ายวัดผลแก้ไปแล้วไม่แตะ
+export async function migrateActivityCurriculum(env) {
+  const KEY = "wb_activity_curriculum_2568";
+  if (await env.DB.prepare("SELECT 1 FROM system_settings WHERE setting_key = ?").bind(KEY).first()) return;
+  const { results: setups } = await env.DB.prepare("SELECT academic_year_id, grade_level FROM gr_activity_setup").all();
+  const def = DEFAULT_ACTIVITIES.map(([k, n]) => `${k}|${n}`).sort().join(",");
+  for (const st of setups) {
+    const cur = curriculumActivities(st.grade_level);
+    if (!cur) continue;
+    const { results: acts } = await env.DB.prepare(`SELECT a.id, a.activity_key, a.name, (SELECT COUNT(*) FROM gr_activity_indicators i WHERE i.activity_id = a.id) AS n
+      FROM gr_activities a WHERE a.academic_year_id = ? AND a.grade_level = ?`).bind(st.academic_year_id, st.grade_level).all();
+    if (acts.some((a) => a.n > 0) || acts.map((a) => `${a.activity_key}|${a.name}`).sort().join(",") !== def) continue;
+    const stmts = [];
+    for (const c of cur) {
+      const a = acts.find((x) => x.activity_key === c.key);
+      stmts.push(env.DB.prepare("UPDATE gr_activities SET name = ? WHERE id = ?").bind(c.name, a.id));
+      c.indicators.forEach((label, n) => stmts.push(env.DB.prepare("INSERT INTO gr_activity_indicators (activity_id, label, sort_order) VALUES (?,?,?)").bind(a.id, label, (n + 1) * 10)));
+    }
+    await env.DB.batch(stmts);
+  }
+  await env.DB.prepare("INSERT INTO system_settings (setting_key, setting_value, updated_at) VALUES (?, '1', datetime('now')) ON CONFLICT(setting_key) DO NOTHING").bind(KEY).run();
+}
+
 // ครั้งเดียว: ทุกวิชาที่มีอยู่ → ตัดเกรดรายภาค ภาคละ 100 สัดส่วน 70:30 (ข้ามวิชาที่มีห้องส่งผลแล้ว)
 async function migrateTermDefault(env) {
   const KEY = "wb_term100_7030_migrated";
@@ -452,6 +478,7 @@ export async function ensureSchema(env) {
     await migrateActivityTerms(env);
     await seedIndicatorBank(env);
     await migrateTermDefault(env);
+    await migrateActivityCurriculum(env);
     await env.DB.prepare(`INSERT INTO system_settings (setting_key, setting_value, updated_at)
       VALUES ('students_report_schema', ?, datetime('now'))
       ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value, updated_at = datetime('now')`)
