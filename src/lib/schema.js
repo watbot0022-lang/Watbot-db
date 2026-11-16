@@ -6,7 +6,7 @@ import BANK_2569_KINDER from "../data/indicator-bank-2569-kinder.js";
 // ตั้งใจไม่ใส่ FOREIGN KEY ไปยังตารางของระบบบริหารโรงเรียน (users, students, academic_years)
 // เพื่อไม่ให้การลบผู้ใช้/นักเรียนในระบบนั้นล้มเหลวเพราะติดข้อมูลของระบบนี้
 
-export const SCHEMA_VERSION = "wb-6"; // wb-6 = ค่าเริ่มต้นตัดเกรดรายภาค ภาคละ 100 70:30 + ปรับวิชาเดิมครั้งเดียว · wb-5 = gr_subjects.grading_mode ฝ่ายวัดผลกำหนดรายวิชา (wb-4 gr_courses.grading_mode เลิกใช้) · wb-2 = ตาราง gr-22 ของป่าเด็ง (gr_guard, data_rev) · wb-3 = gr-23 กิจกรรมรายภาค
+export const SCHEMA_VERSION = "wb-7"; // wb-7 = กิจกรรมพัฒนาผู้เรียน + ตัวชี้วัด ฝ่ายวัดผลกำหนดรายปี/ชั้น (gr_activities) · wb-6 = ค่าเริ่มต้นตัดเกรดรายภาค ภาคละ 100 70:30 + ปรับวิชาเดิมครั้งเดียว · wb-5 = gr_subjects.grading_mode ฝ่ายวัดผลกำหนดรายวิชา (wb-4 gr_courses.grading_mode เลิกใช้) · wb-2 = ตาราง gr-22 ของป่าเด็ง (gr_guard, data_rev) · wb-3 = gr-23 กิจกรรมรายภาค
 
 // ตารางพื้นฐาน (ป่าเด็งใช้ร่วมกับระบบทะเบียน banpadeng-school-db) — วัดโบสถ์ทำงานเดี่ยว ระบบจึงสร้างเอง
 export const CORE_SQL = [
@@ -312,6 +312,17 @@ export const SCHEMA_SQL = [
     body TEXT NOT NULL,
     updated_by INTEGER, updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (academic_year_id, term_number, student_id, field))`,
+  // wb-7: กิจกรรมพัฒนาผู้เรียน (ปพ.5.1) ฝ่ายวัดผลเพิ่ม/แก้/ลบได้ รายปี + ระดับชั้น · key = คีย์ใน gr_assessments (act_xxx)
+  `CREATE TABLE IF NOT EXISTS gr_activities (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, academic_year_id INTEGER NOT NULL, grade_level TEXT NOT NULL,
+    activity_key TEXT NOT NULL, name TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE (academic_year_id, grade_level, activity_key))`,
+  `CREATE TABLE IF NOT EXISTS gr_activity_indicators (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, activity_id INTEGER NOT NULL REFERENCES gr_activities(id) ON DELETE CASCADE,
+    label TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+  `CREATE INDEX IF NOT EXISTS idx_activity_ind ON gr_activity_indicators(activity_id)`,
+  // ปี/ชั้นที่ตั้งรายการกิจกรรมแล้ว (ลบกิจกรรมจนหมดก็ไม่ถูกเติมค่าเริ่มต้นกลับมา)
+  `CREATE TABLE IF NOT EXISTS gr_activity_setup (academic_year_id INTEGER NOT NULL, grade_level TEXT NOT NULL, PRIMARY KEY (academic_year_id, grade_level))`,
 ];
 
 // คอลัมน์ที่เพิ่มหลังเวอร์ชันแรก — เพิ่มเฉพาะที่ยังไม่มี (ALTER TABLE ADD COLUMN ไม่แตะข้อมูลเดิม)

@@ -130,7 +130,7 @@ test("กิจกรรมพัฒนาผู้เรียน: ครูป
   const d = (await call("t1", "GET", `/api/homeroom?${Q}`, null, { expect: 200 })).data;
   const sid = d.students.find((x) => x.enrollment_status === "enrolled").id;
   const meta = (await call("t1", "GET", "/api/activities", null, { expect: 200 })).data;
-  assert.equal(meta.activities.length, 4);
+  assert.equal((await call("t1", "GET", `/api/activities?${Q}`, null, { expect: 200 })).data.activities.length, 4); // 4 กิจกรรมเริ่มต้น
   assert.ok(meta.rooms.some((r) => r.grade_level === "ป.4" && r.classroom === "1"));
   const body = { grade: "ป.4", room: "1", term: 1 };
   assert.deepEqual(meta.terms, [1, 2]);
@@ -248,4 +248,63 @@ test("อนุบาล: คำนวณสรุปผลพัฒนากา
   const s = domainSummary(items, { a: { "1-1": 3 }, b: { "1-1": 2 } }, 1);
   assert.equal(s[0].avg, 2.5); assert.equal(s[0].level, 3); assert.equal(s[0].n, 2);
   assert.equal(s[3].level, null); assert.equal(s[3].total, 1);
+});
+
+test("ฝ่ายวัดผลตั้งกิจกรรม/ตัวชี้วัด รายปี+ชั้น · ครูบันทึก ผ/มผ รายตัวชี้วัด รายภาค · ผลขึ้น ปพ.6", async () => {
+  const { call } = await setup();
+  const d = (await call("t1", "GET", `/api/homeroom?${Q}`, null, { expect: 200 })).data;
+  const sid = d.students.find((x) => x.enrollment_status === "enrolled").id;
+  // ครูตั้งค่าไม่ได้
+  await call("t1", "POST", "/api/activities/setup", { grade: "ป.4", name: "ชุมนุมดนตรี" }, { expect: 403 });
+  let S = (await call("admin", "GET", "/api/activities/setup", null, { expect: 200 })).data;
+  assert.equal(S.activities["ป.4"].length, 4);
+  assert.equal(S.activities["ป.1"].length, 4);
+  // เพิ่มกิจกรรม ป.4 + ตัวชี้วัด 2 ข้อ
+  S = (await call("admin", "POST", "/api/activities/setup", { grade: "ป.4", name: "ชุมนุมดนตรี" }, { expect: 200 })).data;
+  const music = S.activities["ป.4"].find((a) => a.label === "ชุมนุมดนตรี");
+  assert.match(music.key, /^act_c\d+$/);
+  assert.equal(S.activities["ป.1"].some((a) => a.label === "ชุมนุมดนตรี"), false); // แยกรายชั้น
+  await call("admin", "POST", `/api/activities/setup/${music.id}/indicators`, { label: "" }, { expect: 400 });
+  await call("admin", "POST", `/api/activities/setup/${music.id}/indicators`, { label: "เข้าร่วมกิจกรรมสม่ำเสมอ" }, { expect: 200 });
+  S = (await call("admin", "POST", `/api/activities/setup/${music.id}/indicators`, { label: "ทำงานร่วมกับผู้อื่นได้" }, { expect: 200 })).data;
+  const inds = S.activities["ป.4"].find((a) => a.id === music.id).indicators;
+  assert.equal(inds.length, 2);
+  // แก้ชื่อ · แก้ตัวชี้วัด
+  await call("admin", "PUT", `/api/activities/setup/${music.id}`, { name: "ชุมนุมดนตรีไทย" }, { expect: 200 });
+  S = (await call("admin", "PUT", `/api/activities/setup/indicators/${inds[1].id}`, { label: "ทำงานเป็นทีมได้" }, { expect: 200 })).data;
+  const m2 = S.activities["ป.4"].find((a) => a.id === music.id);
+  assert.equal(m2.label, "ชุมนุมดนตรีไทย");
+  assert.equal(m2.indicators[1].label, "ทำงานเป็นทีมได้");
+  // ลบกิจกรรมเริ่มต้นของ ป.4 หนึ่งรายการ
+  const club = S.activities["ป.4"].find((a) => a.key === "act_club");
+  S = (await call("admin", "DELETE", `/api/activities/setup/${club.id}`, null, { expect: 200 })).data;
+  assert.equal(S.activities["ป.4"].some((a) => a.key === "act_club"), false);
+  // ครูเห็นรายการใหม่ · บันทึกรายตัวชี้วัด ภาค 1 ได้ · คีย์จุดประสงค์ของกิจกรรมที่มีตัวชี้วัดใช้ไม่ได้ · กิจกรรมที่ลบใช้ไม่ได้
+  const g = (await call("t1", "GET", `/api/activities?${Q}`, null, { expect: 200 })).data;
+  assert.deepEqual(g.activities.map((a) => a.label).includes("ชุมนุมดนตรีไทย"), true);
+  const ik = (i, t) => `${music.key}_i${inds[i].id}t${t}`;
+  const body = { grade: "ป.4", room: "1", term: 1 };
+  await call("t1", "PUT", "/api/activities", { ...body, changes: [{ student_id: sid, item_key: ik(0, 1), value: "มผ" }] }, { expect: 200 });
+  await call("t1", "PUT", "/api/activities", { ...body, changes: [{ student_id: sid, item_key: `${music.key}_o1`, value: "มผ" }] }, { expect: 400 });
+  await call("t1", "PUT", "/api/activities", { ...body, changes: [{ student_id: sid, item_key: "act_club_t1", value: "มผ" }] }, { expect: 400 });
+  await call("t1", "PUT", "/api/activities", { ...body, changes: [{ student_id: sid, item_key: ik(1, 2), value: "มผ" }] }, { expect: 400 }); // ภาค 2 บันทึกที่ภาค 2
+  // ผลกิจกรรม: ไม่ผ่านตัวชี้วัดข้อ 1 ภาค 1 → ไม่ผ่านภาค 1 และทั้งปี
+  const ids = inds.map((i) => i.id);
+  const vals = { [ik(0, 1)]: "มผ" };
+  assert.equal(activityResult(music.key, vals, 1, ids), "มผ");
+  assert.equal(activityResult(music.key, vals, 2, ids), "ผ");
+  assert.equal(activityResult(music.key, vals, null, ids), "มผ");
+  assert.equal(activityResult(music.key, { [`${music.key}_o1`]: "มผ" }, 1, ids), "ผ"); // มีตัวชี้วัดแล้ว ช่องจุดประสงค์ไม่นับ
+  const rep = (await call("t1", "GET", `/api/reports/room?${Q}`, null, { expect: 200 })).data;
+  assert.equal(rep.activities.find((a) => a.id === music.id).indicators.length, 2);
+  assert.equal(rep.students.find((x) => x.id === sid).assessments[ik(0, 1)], "มผ");
+  // ลบตัวชี้วัด → ผลข้อนั้นไม่นับ
+  await call("admin", "DELETE", `/api/activities/setup/indicators/${inds[0].id}`, null, { expect: 200 });
+  const after = (await call("t1", "GET", `/api/activities?${Q}`, null, { expect: 200 })).data;
+  assert.equal(after.activities.find((a) => a.id === music.id).indicators.length, 1);
+  assert.equal(after.students.find((x) => x.id === sid).values[ik(0, 1)], undefined);
+  // คัดลอกรายการ ป.4 ไป ป.5
+  S = (await call("admin", "POST", "/api/activities/setup/copy", { from: "ป.4", to: ["ป.5"] }, { expect: 200 })).data;
+  assert.deepEqual(S.activities["ป.5"].map((a) => a.label), S.activities["ป.4"].map((a) => a.label));
+  assert.equal(S.activities["ป.5"].find((a) => a.key === music.key).indicators.length, 1);
 });

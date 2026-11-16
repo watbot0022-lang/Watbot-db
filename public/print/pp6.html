@@ -10,7 +10,7 @@
 <div id="doc"><div class="status">กำลังเตรียมเอกสาร…</div></div>
 <script type="module">
 import { esc, params, get, toolbar, status, fmt, td, gradeOut, GRADE_TEXT, fixed, directorTitleHtml } from "/print/print.js";
-import { ASSESSMENT_GROUPS, summarizeGroup, summaryText, activityResult } from "/js/grading.js";
+import { ASSESSMENT_GROUPS, summarizeGroup, summaryText, activityResult, activityGroup } from "/js/grading.js";
 
 const p = params();
 const q = new URLSearchParams({ grade: p.get("grade") || "", room: p.get("room") || "" });
@@ -58,13 +58,13 @@ function attendanceHtml(a = {}) {
 }
 
 // กิจกรรมพัฒนาผู้เรียน: ภาค 1 = ผลภาค 1 · ภาค 2 = ผลภาค 1, ภาค 2 และผลทั้งปี (ผ่านเมื่อผ่านทั้ง 2 ภาค)
-const ACT = ASSESSMENT_GROUPS.find((g) => g.type === "activity");
+const ACT = activityGroup(d.activities); // กิจกรรมของชั้นที่ฝ่ายวัดผลกำหนด (ผลรายกิจกรรม)
 function activityHtml(v = {}) {
   const cols = TERM === 1 ? [1] : [1, 2, null];
   const head = (t) => t ? `ภาค ${td(t)}` : "ทั้งปี";
   return `<table class="t tiny" style="font-size:${TERM === 1 ? 14 : 13}pt;margin-top:2mm">
     <thead><tr><th style="text-align:left">${ACT.title}${TERM === 1 ? ` ภาคเรียนที่ ${td(1)}` : ""}</th>${cols.map((t) => `<th style="width:${TERM === 1 ? 42 : 24}mm">${TERM === 1 ? "ผลการประเมิน" : head(t)}</th>`).join("")}</tr></thead>
-    <tbody>${ACT.items.map(([k, label]) => `<tr><td>&nbsp;&nbsp;${esc(label)}</td>${cols.map((t) => `<td class="c">${levelText(ACT, activityResult(k, v, t))}</td>`).join("")}</tr>`).join("")}
+    <tbody>${ACT.items.map(([k, label, ind]) => `<tr><td>&nbsp;&nbsp;${esc(label)}</td>${cols.map((t) => `<td class="c">${levelText(ACT, activityResult(k, v, t, ind))}</td>`).join("")}</tr>`).join("")}
       <tr><td class="r"><b>สรุป</b></td>${cols.map((t) => `<td class="c"><b>${levelText(ACT, summarizeGroup(ACT, v, t))}</b></td>`).join("")}</tr></tbody>
   </table>`;
 }

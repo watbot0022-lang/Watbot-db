@@ -330,7 +330,7 @@ export const ASSESSMENT_GROUPS = [
     items: [
       ["act_guidance", "กิจกรรมแนะแนว"], ["act_scout", "ลูกเสือ-เนตรนารี"],
       ["act_club", "ฐานการเรียนรู้"], ["act_social", "กิจกรรมเพื่อสังคมและสาธารณประโยชน์"],
-    ],
+    ], // ค่าเริ่มต้น — รายการจริงฝ่ายวัดผลกำหนดรายปี/ชั้น (activityGroup)
   },
 ];
 
@@ -339,6 +339,20 @@ export const ACTIVITY_PARTS = [["t", "เวลาเรียน"], ["o", "จ�
 // ผลทั้งปี (สรุปที่ภาคเรียนที่ 2) = ผ่านเมื่อผ่านทั้ง 2 ภาค · ข้อมูลเดิมก่อนแยกภาค (act_scout_t) ย้ายเป็นภาค 1 ใน schema gr-23
 export const ACTIVITY_TERMS = [1, 2];
 export const activityKey = (key, part, term) => `${key}_${part}${term}`;
+// กิจกรรมที่ฝ่ายวัดผลกำหนด (รายปี + ระดับชั้น): [{ key, label, indicators: [{ id, label }] }]
+// ตัวชี้วัดของกิจกรรม บันทึกรายภาค คีย์ = <กิจกรรม>_i<ตัวชี้วัด>t<ภาค> เช่น act_scout_i12t1 · เก็บเฉพาะ "มผ"
+export const activityIndicatorKey = (key, indId, term) => `${key}_i${indId}t${term}`;
+export const DEFAULT_ACTIVITIES = [
+  ["act_guidance", "กิจกรรมแนะแนว"], ["act_scout", "ลูกเสือ-เนตรนารี"],
+  ["act_club", "ฐานการเรียนรู้"], ["act_social", "กิจกรรมเพื่อสังคมและสาธารณประโยชน์"],
+];
+// กลุ่มกิจกรรมตามรายการของชั้น (ไม่ส่งรายการ = 4 กิจกรรมเริ่มต้น) · items = [key, label, [id ตัวชี้วัด]]
+export function activityGroup(activities) {
+  const base = ASSESSMENT_GROUPS.find((g) => g.type === "activity");
+  if (!Array.isArray(activities)) return base;
+  return { ...base, items: activities.map((a) => [a.key, a.label, (a.indicators || []).map((i) => i.id)]) };
+}
+export const groupsFor = (activities) => ASSESSMENT_GROUPS.map((g) => (g.type === "activity" ? activityGroup(activities) : g));
 export const ASSESSMENT_KEYS = new Set(ASSESSMENT_GROUPS.flatMap((g) => g.type === "activity"
   ? g.items.flatMap(([k]) => ACTIVITY_PARTS.flatMap(([p]) => ACTIVITY_TERMS.map((t) => activityKey(k, p, t))))
   : g.items.map((i) => i[0])));
@@ -352,9 +366,12 @@ export function validAssessmentValue(key, value) {
 
 // ผลกิจกรรม 1 รายการ: ระบุภาค = ผลของภาคนั้น (ผ่านเมื่อทั้งเวลาเรียนและจุดประสงค์ไม่ถูกติ๊กว่าไม่ผ่าน)
 // ไม่ระบุภาค = ผลทั้งปี: ผ่านเมื่อผ่านทั้งภาคเรียนที่ 1 และภาคเรียนที่ 2
-export function activityResult(key, values, term) {
+// มีตัวชี้วัด (indIds) = ผ่านเมื่อผ่านเวลาเรียนและผ่านทุกตัวชี้วัด (ช่อง "จุดประสงค์" เดิมไม่นำมาคิด)
+export function activityResult(key, values, term, indIds) {
   const terms = term ? [term] : ACTIVITY_TERMS;
-  return terms.some((t) => ACTIVITY_PARTS.some(([p]) => values?.[activityKey(key, p, t)] === "มผ")) ? "มผ" : "ผ";
+  const bad = (k) => values?.[k] === "มผ";
+  return terms.some((t) => bad(activityKey(key, "t", t))
+    || (indIds?.length ? indIds.some((id) => bad(activityIndicatorKey(key, id, t))) : bad(activityKey(key, "o", t)))) ? "มผ" : "ผ";
 }
 
 // สรุปผลของกลุ่ม "ตามเกณฑ์" (แนวปฏิบัติ สพฐ.) — ยืนยันกับ ปพ.5 จริงของโรงเรียน (tests/assessment.test.mjs)
@@ -364,7 +381,7 @@ export function activityResult(key, values, term) {
 // สมรรถนะ 5 ด้าน: รวมคะแนน 13–15 ดีเยี่ยม, 9–12 ดี, 5–8 พอใช้, 0–4 ปรับปรุง
 // กิจกรรม: term = ผลของภาคนั้น · ไม่ระบุ = ผลทั้งปี (ต้องผ่านทั้ง 2 ภาค)
 export function summarizeGroup(group, values, term) {
-  if (group.type === "activity") return group.items.some(([k]) => activityResult(k, values, term) === "มผ") ? "มผ" : "ผ";
+  if (group.type === "activity") return group.items.some(([k, , ind]) => activityResult(k, values, term, ind) === "มผ") ? "มผ" : "ผ";
   const vals = group.items.map(([k]) => values?.[k]);
   if (vals.some((v) => v == null || v === "")) return null;
   const n = vals.map(Number);

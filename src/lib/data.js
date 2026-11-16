@@ -1,6 +1,6 @@
 import { governmentHolidaysBetween } from "./thai-holidays.js";
 import { fail } from "./http.js";
-import { computeStudentResult, resultWithAttendance, clean } from "../../public/js/grading.js";
+import { computeStudentResult, resultWithAttendance, clean, DEFAULT_ACTIVITIES } from "../../public/js/grading.js";
 
 export const DEFAULT_SETTINGS = {
   collect_ratio: 70, indicator_pass_pct: 50, attendance_pass_pct: 80,
@@ -394,6 +394,45 @@ export async function yearResultsForStudents(env, yearId, grade, studentIds) {
     out[sid].sort(compareSubject);
   }
   return out;
+}
+
+// ---------- กิจกรรมพัฒนาผู้เรียน (ฝ่ายวัดผลกำหนด รายปี + ระดับชั้น) ----------
+const ACT_GRADES = ["ป.1", "ป.2", "ป.3", "ป.4", "ป.5", "ป.6"];
+// ปีที่ยังไม่ตั้ง: คัดลอกจากปีก่อนหน้าที่มีรายการ (พร้อมตัวชี้วัด) ถ้าไม่มี ใช้ 4 กิจกรรมเริ่มต้น
+export async function ensureActivities(env, yearId) {
+  const { results: done } = await env.DB.prepare("SELECT grade_level FROM gr_activity_setup WHERE academic_year_id = ?").bind(yearId).all();
+  const missing = ACT_GRADES.filter((g) => !done.some((d) => d.grade_level === g));
+  if (!missing.length) return;
+  for (const g of missing) {
+    // ปีก่อนหน้าล่าสุดที่ตั้งรายการของชั้นนี้ไว้ (ตั้งไว้ว่าง = ว่างต่อ)
+    const prev = await env.DB.prepare(`SELECT st.academic_year_id AS id FROM gr_activity_setup st JOIN academic_years y ON y.id = st.academic_year_id
+      WHERE st.grade_level = ? AND y.year_be < (SELECT year_be FROM academic_years WHERE id = ?) ORDER BY y.year_be DESC LIMIT 1`).bind(g, yearId).first();
+    const src = prev ? (await env.DB.prepare("SELECT id, activity_key, name, sort_order FROM gr_activities WHERE academic_year_id = ? AND grade_level = ? ORDER BY sort_order, id")
+      .bind(prev.id, g).all()).results : null;
+    const list = src || DEFAULT_ACTIVITIES.map(([k, n], i) => ({ activity_key: k, name: n, sort_order: (i + 1) * 10 }));
+    const stmts = [env.DB.prepare("INSERT OR IGNORE INTO gr_activity_setup (academic_year_id, grade_level) VALUES (?, ?)").bind(yearId, g)];
+    for (const a of list) {
+      stmts.push(env.DB.prepare("INSERT OR IGNORE INTO gr_activities (academic_year_id, grade_level, activity_key, name, sort_order) VALUES (?,?,?,?,?)")
+        .bind(yearId, g, a.activity_key, a.name, a.sort_order));
+      if (a.id) stmts.push(env.DB.prepare(`INSERT INTO gr_activity_indicators (activity_id, label, sort_order)
+        SELECT (SELECT id FROM gr_activities WHERE academic_year_id = ? AND grade_level = ? AND activity_key = ?), label, sort_order
+          FROM gr_activity_indicators WHERE activity_id = ?`).bind(yearId, g, a.activity_key, a.id));
+    }
+    await env.DB.batch(stmts);
+  }
+}
+
+// { "ป.1": [{ id, key, label, indicators: [{ id, label }] }], ... } — ไม่ระบุ grade = ทุกชั้น
+export async function activitiesFor(env, yearId, grade) {
+  await ensureActivities(env, yearId);
+  const { results: acts } = await env.DB.prepare(`SELECT id, grade_level, activity_key, name, sort_order FROM gr_activities
+    WHERE academic_year_id = ?${grade ? " AND grade_level = ?" : ""} ORDER BY sort_order, id`).bind(...(grade ? [yearId, grade] : [yearId])).all();
+  const { results: inds } = acts.length ? await env.DB.prepare(`SELECT i.id, i.activity_id, i.label, i.sort_order FROM gr_activity_indicators i
+    JOIN gr_activities a ON a.id = i.activity_id WHERE a.academic_year_id = ? ORDER BY i.sort_order, i.id`).bind(yearId).all() : { results: [] };
+  const out = {};
+  for (const a of acts) (out[a.grade_level] ||= []).push({ id: a.id, key: a.activity_key, label: a.name, sort_order: a.sort_order,
+    indicators: inds.filter((i) => i.activity_id === a.id).map((i) => ({ id: i.id, label: i.label, sort_order: i.sort_order })) });
+  return grade ? out[grade] || [] : out;
 }
 
 export async function assessmentsFor(env, yearId, studentIds) {

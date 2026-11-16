@@ -1,6 +1,6 @@
 // ส่งออกผลการเรียนเป็น Excel / CSV (สร้างในเบราว์เซอร์ ไม่ส่งข้อมูลออกนอกระบบ)
 import { api, toast } from "/js/app.js";
-import { ASSESSMENT_GROUPS, summarizeGroup, summaryText } from "/js/grading.js";
+import { groupsFor, summarizeGroup, summaryText } from "/js/grading.js";
 
 let xlsxLoading;
 export function loadXlsx() {
@@ -24,11 +24,11 @@ export function roomSheetRows(data) {
   const subjects = [];
   for (const s of data.students) for (const g of s.subjects) if (!subjects.some((x) => x.code === g.code)) subjects.push(g);
   const header = ["เลขที่", "เลขประจำตัว", "เลขประจำตัวประชาชน", "ชื่อ–สกุล", ...subjects.map((s) => `${s.code} ${s.name}`), "ผลการเรียนเฉลี่ย",
-    ...ASSESSMENT_GROUPS.map((g) => g.title), "วันขาดเรียน (ที่บันทึก)"];
+    ...groupsFor(data.activities).map((g) => g.title), "วันขาดเรียน (ที่บันทึก)"];
   const rows = data.students.map((st) => {
     const by = Object.fromEntries(st.subjects.map((g) => [g.code, g.grade]));
     return [st.number ?? "", st.student_code, st.national_id || "", st.name, ...subjects.map((s) => by[s.code] ?? ""), st.gpa ?? "",
-      ...ASSESSMENT_GROUPS.map((g) => summaryText(g, summarizeGroup(g, st.assessments))), st.absent_days];
+      ...groupsFor(data.activities).map((g) => summaryText(g, summarizeGroup(g, st.assessments))), st.absent_days];
   });
   return [header, ...rows];
 }
