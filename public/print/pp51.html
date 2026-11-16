@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ปพ.5.1 — แบบบันทึกผลการประเมินกิจกรรมพัฒนาผู้เรียน</title>
+<link rel="stylesheet" href="/print/print.css">
+</head>
+<body>
+<div id="doc"><div class="status">กำลังเตรียมเอกสาร…</div></div>
+<script type="module">
+// ปพ.5.1: 1 หน้าต่อกิจกรรม — ผล ผ/มผ รายตัวชี้วัด รายภาค (กิจกรรมและตัวชี้วัดฝ่ายวัดผลกำหนดรายปี/ชั้น)
+import { esc, params, get, toolbar, status, td } from "/print/print.js";
+import { activityKey, activityIndicatorKey, activityResult } from "/js/grading.js";
+
+const p = params();
+const q = new URLSearchParams({ grade: p.get("grade") || "", room: p.get("room") || "" });
+if (p.get("year")) q.set("year", p.get("year"));
+const TERM = p.get("term") === "1" ? 1 : 2;
+let d;
+try { d = await get(`/api/reports/room?${q}`); } catch (e) { status(e.message); throw e; }
+toolbar(`ปพ.5.1 ${d.grade}/${d.room} ภาคเรียนที่ ${TERM} ปีการศึกษา ${d.year.year_be}`);
+document.title = `ปพ.5.1 ${d.grade}-${d.room} ภาค${TERM} ${d.year.year_be}`;
+const acts = d.activities || [];
+if (!acts.length) { status("ชั้นนี้ยังไม่มีกิจกรรมพัฒนาผู้เรียน — ฝ่ายวัดผลตั้งได้ที่หน้ากิจกรรมพัฒนาผู้เรียน"); throw new Error("empty"); }
+const students = d.students.filter((s) => s.enrollment_status === "enrolled");
+const mark = (v) => (v === "มผ" ? "มผ" : "ผ");
+const RES = (v) => (v === "มผ" ? "ไม่ผ่าน" : "ผ่าน");
+const school = d.settings.school_name || "";
+
+const page = (a) => {
+  const inds = a.indicators, ids = inds.map((i) => i.id);
+  const cols = [{ key: activityKey(a.key, "t", TERM), label: "เวลาเรียน" },
+    ...(inds.length ? inds.map((i, n) => ({ key: activityIndicatorKey(a.key, i.id, TERM), label: `${td(n + 1)}` })) : [{ key: activityKey(a.key, "o", TERM), label: "จุดประสงค์" }])];
+  return `<section class="sheet">
+    <div style="text-align:center"><b>ปพ.5.1 แบบบันทึกผลการประเมินกิจกรรมพัฒนาผู้เรียน</b><br>
+      ${esc(a.label)} · ชั้น ${esc(d.grade)}/${esc(d.room)} · ภาคเรียนที่ ${td(TERM)} ปีการศึกษา ${td(d.year.year_be)}${school ? `<br>${esc(school)}` : ""}</div>
+    <table class="t small" style="margin-top:4mm">
+      <thead><tr><th rowspan="2" style="width:10mm">เลขที่</th><th rowspan="2">ชื่อ–สกุล</th>
+        <th colspan="${cols.length}">ภาคเรียนที่ ${td(TERM)}${inds.length ? " (ตัวชี้วัดข้อ)" : ""}</th>
+        ${TERM === 2 ? "<th rowspan=\"2\" style=\"width:16mm\">ผลภาค ${td(1)}</th>" : ""}<th rowspan="2" style="width:16mm">ผลภาค ${td(TERM)}</th>${TERM === 2 ? "<th rowspan=\"2\" style=\"width:16mm\">ผลทั้งปี</th>" : ""}</tr>
+        <tr>${cols.map((c) => `<th style="width:${c.label.length > 3 ? 16 : 9}mm">${c.label}</th>`).join("")}</tr></thead>
+      <tbody>${students.map((s) => { const v = s.assessments || {};
+        return `<tr><td class="c">${td(s.number ?? "")}</td><td>${esc(s.name)}</td>${cols.map((c) => `<td class="c">${mark(v[c.key])}</td>`).join("")}
+          ${TERM === 2 ? `<td class="c">${RES(activityResult(a.key, v, 1, ids))}</td>` : ""}<td class="c">${RES(activityResult(a.key, v, TERM, ids))}</td>
+          ${TERM === 2 ? `<td class="c"><b>${RES(activityResult(a.key, v, null, ids))}</b></td>` : ""}</tr>`; }).join("")}</tbody>
+    </table>
+    ${inds.length ? `<div class="small" style="margin-top:3mm"><b>ตัวชี้วัด</b><ol style="margin:1mm 0 0 6mm;padding:0">${inds.map((i) => `<li>${esc(i.label)}</li>`).join("")}</ol></div>` : ""}
+    <div class="small" style="margin-top:2mm">ผ = ผ่าน · มผ = ไม่ผ่าน · ผ่านกิจกรรมเมื่อผ่านเวลาเรียนและผ่านทุกตัวชี้วัด${TERM === 2 ? " · ผลทั้งปีผ่านเมื่อผ่านทั้ง ${td(2)} ภาคเรียน" : ""}</div>
+    <div class="signs" style="grid-template-columns:repeat(${Math.min(3, Math.max(1, d.homeroom_teachers.length))},1fr);gap:4mm;margin-top:8mm">
+      ${(d.homeroom_teachers.length ? d.homeroom_teachers : [""]).map((t) => `<div class="sign"><div class="line" style="margin:0 2mm 1mm"></div>(${esc(t || "..........................................")})<br>ครูประจำชั้น</div>`).join("")}
+    </div>
+  </section>`;
+};
+document.getElementById("doc").innerHTML = acts.map(page).join("");
+</script>
+</body>
+</html>

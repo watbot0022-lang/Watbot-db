@@ -1,7 +1,7 @@
 import { json, fail, requireUser, requireViewer, requireReportViewer, intParam, text } from "../lib/http.js";
 import {
   resolveYear, listYears, getSettings, listRooms, roomRoster, isHomeroomTeacher, yearResultsForStudents,
-  assessmentsFor, absenceCounts, attendanceSummary, yearTerms, currentTerm, termOfDate, studentName, isPrimaryGrade, isSchoolGrade, isKinderGrade, compareGrade, compareRoom, compareSubject, homeroomNames,
+  assessmentsFor, absenceCounts, attendanceSummary, yearTerms, currentTerm, termOfDate, studentName, isPrimaryGrade, isSchoolGrade, isKinderGrade, compareGrade, compareRoom, compareSubject, homeroomNames, activitiesFor,
 } from "../lib/data.js";
 import { courseOverview } from "./admin.js";
 import { listAbsences, commentsFor, bodyFor } from "./homeroom.js";
@@ -50,7 +50,7 @@ async function roomReport(env, year, grade, room, onlyStudent) {
   let roster = await roomRoster(env, year.id, grade, room);
   if (onlyStudent) roster = roster.filter((s) => s.id === onlyStudent);
   const ids = roster.map((s) => s.id);
-  const [grades, assessments, absences, settings, homeroom, comments, attendance, body, terms] = await Promise.all([
+  const [grades, assessments, absences, settings, homeroom, comments, attendance, body, terms, activities] = await Promise.all([
     yearResultsForStudents(env, year.id, grade, ids),
     assessmentsFor(env, year.id, ids),
     absenceCounts(env, year.id, ids),
@@ -60,9 +60,10 @@ async function roomReport(env, year, grade, room, onlyStudent) {
     attendanceSummary(env, year.id, ids),
     bodyFor(env, year.id, ids),
     yearTerms(env, year.id),
+    isPrimaryGrade(grade) ? activitiesFor(env, year.id, grade) : [],
   ]);
   return {
-    year, grade, room, settings, homeroom_teachers: homeroom, terms,
+    year, grade, room, settings, homeroom_teachers: homeroom, terms, activities, // กิจกรรมพัฒนาผู้เรียนของชั้น (ฝ่ายวัดผลกำหนด)
     students: roster.map((s) => ({
       id: s.id, number: s.number, student_code: s.student_code, national_id: s.national_id, name: studentName(s),
       birth_date: s.birth_date, gender: s.gender, enrollment_status: s.enrollment_status, transfer_in_term: s.transfer_in_term || null,
@@ -162,7 +163,8 @@ export async function handleReports(request, env, user, parts, method, url) {
     for (const y of years) {
       const res = await yearResultsForStudents(env, y.year_id, y.grade_level, [sid]);
       const ass = await assessmentsFor(env, y.year_id, [sid]);
-      out.push({ year_be: y.year_be, grade_level: y.grade_level, classroom: y.classroom, subjects: res[sid] || [], gpa: weightedGPA(res[sid] || []), assessments: ass[sid] || {} });
+      out.push({ year_be: y.year_be, grade_level: y.grade_level, classroom: y.classroom, subjects: res[sid] || [], gpa: weightedGPA(res[sid] || []), assessments: ass[sid] || {},
+        activities: await activitiesFor(env, y.year_id, y.grade_level) });
     }
     const settings = years.length ? await getSettings(env, years[years.length - 1].year_id) : await getSettings(env, (await resolveYear(env)).id);
     return json({ student: { ...s, name: studentName(s) }, years: out, settings });

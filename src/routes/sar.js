@@ -4,9 +4,9 @@
 import { json, readJson, fail, requireViewer, requireReportViewer, text, audit, batchAll } from "../lib/http.js";
 import {
   resolveYear, listRooms, roomRoster, yearResultsForStudents, assessmentsFor, attendanceRates,
-  isPrimaryGrade, isKinderGrade, compareGrade, getSettings,
+  isPrimaryGrade, isKinderGrade, compareGrade, getSettings, activitiesFor,
 } from "../lib/data.js";
-import { ASSESSMENT_GROUPS, summarizeGroup, clean } from "../../public/js/grading.js";
+import { ASSESSMENT_GROUPS, summarizeGroup, clean, activityGroup } from "../../public/js/grading.js";
 import { SAR_ITEM_KEYS, CORE_AREAS, DEFAULT_LEVELS } from "../../public/js/sar.js";
 import { LEARNING_AREAS } from "./admin.js";
 import { analyzeBody, setGrowthRefs, HFA_LEVELS } from "../../public/js/growth.js";
@@ -89,6 +89,7 @@ export async function sarData(env, year) {
       graded ? assessmentsFor(env, year.id, ids) : {},
       graded ? yearResultsForStudents(env, year.id, r.grade_level, ids) : {},
     ]);
+    const actGroup = graded ? activityGroup(await activitiesFor(env, year.id, r.grade_level)) : null; // กิจกรรมของชั้น (ฝ่ายวัดผลกำหนด)
     for (const sid of ids) {
       const a = att[sid];
       if (a?.days) { anyAttendance[stage] = true; add(m, "att80", a.pct >= passPct); }
@@ -107,7 +108,7 @@ export async function sarData(env, year) {
       if (trait != null) add(m, "trait_good", Number(trait) >= 2);
       if (rtw != null) add(m, "rtw_good", Number(rtw) >= 2);
       for (const k of ["comp_2", "comp_3", "comp_4", "comp_5", "trait_7"]) if (v[k] != null && v[k] !== "") add(m, k, Number(v[k]) >= 2);
-      add(m, "act_pass", summarizeGroup(group("act"), v) === "ผ");
+      add(m, "act_pass", summarizeGroup(actGroup, v) === "ผ");
     }
   }
   // ยังไม่มีใครบันทึกการมาเรียน → ทุกคนดูเหมือนมา 100% ซึ่งไม่ใช่ข้อมูลจริง จึงไม่นำมาคิด
