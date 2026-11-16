@@ -158,27 +158,42 @@ function roleMenu(role, me) {
     ...(me.homerooms.length ? [{ href: "/logs.html", icon: "list", label: "บันทึกประจำวัน" }, { href: "/calendar.html", icon: "clock", label: "ปฏิทินวันหยุด" }] : []),
     { href: "/docs.html", icon: "doc", label: "คลังเอกสาร" },
   ];
-  if (role === "measure") return [
-    { href: "/reports.html#progress", icon: "chart", label: "ติดตามการส่งผล" },
-    { href: "/admin.html#start", icon: "flag", label: "เริ่มต้นปีการศึกษา" },
-    { href: "/admin.html#years", icon: "clock", label: "ปีการศึกษาและภาคเรียน" },
-    { href: "/admin.html#import", icon: "upload", label: "นำเข้า / ส่งออกข้อมูล" },
-    { href: "/admin.html#people", icon: "key", label: "บัญชีผู้ใช้และสิทธิ์" },
-    { href: "/admin.html#subjects", icon: "list", label: "รายวิชา" },
-    { href: "/admin.html#review", icon: "check", label: "ตรวจผลการเรียน" },
-    { href: "/admin.html#requests", icon: "key", label: "คำขอแก้ไข" },
-    { href: "/admin.html#courses", icon: "people", label: "ครูผู้สอน" },
-    { href: "/admin.html#homerooms", icon: "room", label: "ครูประจำชั้น" },
-    { href: "/admin.html#students", icon: "people", label: "นักเรียน" },
-    { href: "/admin.html#calendar", icon: "clock", label: "ปฏิทินวันหยุด" },
-    { href: "/activities.html", icon: "check", label: "กิจกรรมพัฒนาผู้เรียน" },
-    { href: "/logs.html", icon: "list", label: "บันทึกประจำวัน" },
-    { href: "/admin.html#bank", icon: "bank", label: "คลังตัวชี้วัด" },
-    { href: "/admin.html#settings", icon: "gear", label: "เกณฑ์และผู้ลงนาม" },
-    { href: "/reports.html#summary", icon: "chart", label: "สรุปผลสัมฤทธิ์" },
-    { href: "/sar.html", icon: "award", label: "ข้อมูล SAR" },
-    { href: "/docs.html", icon: "doc", label: "คลังเอกสาร" },
-  ];
+  if (role === "measure") {
+    // จัดเป็นกลุ่ม (sub menu พับ/กางได้) — group = ชื่อกลุ่ม · ไม่มี group = เมนูเดี่ยว
+    const G = (group, items) => items.map((m) => ({ ...m, group }));
+    // ไอคอนของกลุ่มอยู่ที่ GROUP_ICON
+    return [
+      { href: "/reports.html#progress", icon: "chart", label: "ติดตามการส่งผล" },
+      ...G("ตั้งค่าปีการศึกษา", [
+        { href: "/admin.html#start", icon: "flag", label: "เริ่มต้นปีการศึกษา" },
+        { href: "/admin.html#years", icon: "clock", label: "ปีการศึกษาและภาคเรียน" },
+        { href: "/admin.html#calendar", icon: "clock", label: "ปฏิทินวันหยุด" },
+        { href: "/admin.html#settings", icon: "gear", label: "เกณฑ์และผู้ลงนาม" },
+      ]),
+      ...G("ข้อมูลพื้นฐาน", [
+        { href: "/admin.html#import", icon: "upload", label: "นำเข้า / ส่งออกข้อมูล" },
+        { href: "/admin.html#people", icon: "key", label: "บัญชีผู้ใช้และสิทธิ์" },
+        { href: "/admin.html#students", icon: "people", label: "นักเรียน" },
+        { href: "/admin.html#courses", icon: "people", label: "ครูผู้สอน" },
+        { href: "/admin.html#homerooms", icon: "room", label: "ครูประจำชั้น" },
+      ]),
+      ...G("หลักสูตร", [
+        { href: "/admin.html#subjects", icon: "list", label: "รายวิชา" },
+        { href: "/admin.html#bank", icon: "bank", label: "คลังตัวชี้วัด" },
+        { href: "/activities.html", icon: "check", label: "กิจกรรมพัฒนาผู้เรียน" },
+      ]),
+      ...G("ตรวจและอนุมัติ", [
+        { href: "/admin.html#review", icon: "check", label: "ตรวจผลการเรียน" },
+        { href: "/admin.html#requests", icon: "key", label: "คำขอแก้ไข" },
+        { href: "/logs.html", icon: "list", label: "บันทึกประจำวัน" },
+      ]),
+      ...G("รายงาน", [
+        { href: "/reports.html#summary", icon: "chart", label: "สรุปผลสัมฤทธิ์" },
+        { href: "/sar.html", icon: "award", label: "ข้อมูล SAR" },
+        { href: "/docs.html", icon: "doc", label: "คลังเอกสาร" },
+      ]),
+    ];
+  }
   if (role === "viewer") return [
     { href: "/reports.html#summary", icon: "chart", label: "สรุปผลสัมฤทธิ์" },
     { href: "/reports.html#progress", icon: "chart", label: "ภาพรวมการส่งผล" },
@@ -279,7 +294,24 @@ export async function shell(active) {
   try { localStorage.setItem("sr-role", role); } catch { /* */ }
   me.role = role;
 
-  const drawMenu = () => roleMenu(role, me).map((m) => `<a href="${m.href}" class="nav-item" ${sameItem(m.href) ? 'aria-current="page"' : ""}>${MI[m.icon]}<span>${esc(m.label)}</span></a>`).join("");
+  // เมนูที่มี group รวมเป็น sub menu พับ/กางได้ · กลุ่มของหน้าปัจจุบันกางเอง · จำกลุ่มที่ผู้ใช้กางไว้
+  const GROUP_ICON = { "ตั้งค่าปีการศึกษา": "flag", "ข้อมูลพื้นฐาน": "people", "หลักสูตร": "book", "ตรวจและอนุมัติ": "check", "รายงาน": "chart" };
+  const openGroups = () => { try { return new Set(JSON.parse(localStorage.getItem("sr-nav-open") || "[]")); } catch { return new Set(); } };
+  const navLink = (m) => `<a href="${m.href}" class="nav-item${m.group ? " sub" : ""}" ${sameItem(m.href) ? 'aria-current="page"' : ""}>${MI[m.icon]}<span>${esc(m.label)}</span></a>`;
+  const drawMenu = () => {
+    const items = roleMenu(role, me), opened = openGroups(), out = [];
+    for (let i = 0; i < items.length;) {
+      const g = items[i].group;
+      if (!g) { out.push(navLink(items[i++])); continue; }
+      const list = [];
+      while (i < items.length && items[i].group === g) list.push(items[i++]);
+      const here = list.some((m) => sameItem(m.href));
+      out.push(`<details class="nav-group" data-group="${esc(g)}" ${here || opened.has(g) ? "open" : ""}>
+        <summary class="nav-item${here ? " has-current" : ""}">${MI[GROUP_ICON[g]] || MI.list}<span>${esc(g)}</span><span class="nav-caret" aria-hidden="true">›</span></summary>
+        ${list.map(navLink).join("")}</details>`);
+    }
+    return out.join("");
+  };
   const side = document.createElement("aside");
   side.className = "sidebar";
   side.id = "sidebar";
@@ -316,6 +348,13 @@ export async function shell(active) {
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") setOpen(false); });
   side.addEventListener("click", (e) => { if (e.target.closest("a.nav-item")) setOpen(false); });
   window.addEventListener("hashchange", () => { side.querySelector("#sideNav").innerHTML = drawMenu(); });
+  side.querySelector("#sideNav").addEventListener("toggle", (e) => {
+    const g = e.target.dataset?.group;
+    if (!g) return;
+    const set = openGroups();
+    if (e.target.open) set.add(g); else set.delete(g);
+    try { localStorage.setItem("sr-nav-open", JSON.stringify([...set])); } catch { /* */ }
+  }, true);
   side.querySelector("#roleSel").onchange = (e) => {
     try { localStorage.setItem("sr-role", e.target.value); } catch { /* */ }
     const href = roleMenu(e.target.value, me)[0].href;

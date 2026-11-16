@@ -628,3 +628,13 @@ body.term-mode .tabs { border-bottom-color: var(--line); }
 
 /* บันทึกประจำวัน: คอลัมน์วันหยุดเป็นสีแดงในทั้งสองภาค (ชนะสีพื้นของภาคเรียน) */
 :root[data-term] .sheet.log-sheet thead th.log-off, :root[data-term] .log-sheet tfoot td.log-off, .log-sheet tfoot td.log-off { background: #fde4e4; }
+
+/* เมนูย่อย (sub menu) พับ/กางได้ */
+.nav-group > summary { list-style: none; cursor: pointer; user-select: none; }
+.nav-group > summary::-webkit-details-marker { display: none; }
+.nav-group > summary .nav-caret { margin-left: auto; transition: transform .15s; font-size: 16px; line-height: 1; }
+.nav-group[open] > summary .nav-caret { transform: rotate(90deg); }
+.nav-group > summary.has-current { font-weight: 600; }
+.nav-item.sub { padding-left: 34px; font-size: .95em; }
+.nav-item.sub svg { width: 16px; height: 16px; }
+.nav-group[open] { display: grid; gap: 2px; }
