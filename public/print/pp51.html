@@ -38,7 +38,7 @@ const page = (a) => {
     <table class="t small" style="margin-top:4mm">
       <thead><tr><th rowspan="2" style="width:10mm">เลขที่</th><th rowspan="2">ชื่อ–สกุล</th>
         <th colspan="${cols.length}">ภาคเรียนที่ ${td(TERM)}${inds.length ? " (ตัวชี้วัดข้อ)" : ""}</th>
-        ${TERM === 2 ? "<th rowspan=\"2\" style=\"width:16mm\">ผลภาค ${td(1)}</th>" : ""}<th rowspan="2" style="width:16mm">ผลภาค ${td(TERM)}</th>${TERM === 2 ? "<th rowspan=\"2\" style=\"width:16mm\">ผลทั้งปี</th>" : ""}</tr>
+        ${TERM === 2 ? `<th rowspan="2" style="width:16mm">ผลภาค ${td(1)}</th>` : ""}<th rowspan="2" style="width:16mm">ผลภาค ${td(TERM)}</th>${TERM === 2 ? `<th rowspan="2" style="width:16mm">ผลทั้งปี</th>` : ""}</tr>
         <tr>${cols.map((c) => `<th style="width:${c.label.length > 3 ? 16 : 9}mm">${c.label}</th>`).join("")}</tr></thead>
       <tbody>${students.map((s) => { const v = s.assessments || {};
         return `<tr><td class="c">${td(s.number ?? "")}</td><td>${esc(s.name)}</td>${cols.map((c) => `<td class="c">${mark(v[c.key])}</td>`).join("")}
