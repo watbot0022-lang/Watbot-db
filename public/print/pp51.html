@@ -46,7 +46,7 @@ const page = (a) => {
           ${TERM === 2 ? `<td class="c"><b>${RES(activityResult(a.key, v, null, ids))}</b></td>` : ""}</tr>`; }).join("")}</tbody>
     </table>
     ${inds.length ? `<div class="small" style="margin-top:3mm"><b>ตัวชี้วัด</b><ol style="margin:1mm 0 0 6mm;padding:0">${inds.map((i) => `<li>${esc(i.label)}</li>`).join("")}</ol></div>` : ""}
-    <div class="small" style="margin-top:2mm">ผ = ผ่าน · มผ = ไม่ผ่าน · ผ่านกิจกรรมเมื่อผ่านเวลาเรียนและผ่านทุกตัวชี้วัด${TERM === 2 ? " · ผลทั้งปีผ่านเมื่อผ่านทั้ง ${td(2)} ภาคเรียน" : ""}</div>
+    <div class="small" style="margin-top:2mm">ผ = ผ่าน · มผ = ไม่ผ่าน · ผ่านกิจกรรมเมื่อผ่านเวลาเรียนและผ่านทุกตัวชี้วัด${TERM === 2 ? ` · ผลทั้งปีผ่านเมื่อผ่านทั้ง ${td(2)} ภาคเรียน` : ""}</div>
     <div class="signs" style="grid-template-columns:repeat(${Math.min(3, Math.max(1, d.homeroom_teachers.length))},1fr);gap:4mm;margin-top:8mm">
       ${(d.homeroom_teachers.length ? d.homeroom_teachers : [""]).map((t) => `<div class="sign"><div class="line" style="margin:0 2mm 1mm"></div>(${esc(t || "..........................................")})<br>ครูประจำชั้น</div>`).join("")}
     </div>
