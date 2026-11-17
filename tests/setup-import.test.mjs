@@ -314,3 +314,20 @@ test("ย้ายข้อมูลวิชาเพิ่มเติม: แ
   assert.equal(n("SELECT COUNT(*) n FROM gr_indicator_bank WHERE subject_code = 'อ15201'"), 8);
   assert.equal(n("SELECT COUNT(*) n FROM gr_indicator_bank WHERE subject_code = 'อ15205'"), 1);
 });
+
+test("ปพ.5 บันทึกมาเรียนรายวัน: เฉพาะวันเปิดเรียนของภาคที่เลือก พร้อมรหัสการมาเรียน", async () => {
+  const { env, call } = await setup();
+  await call("admin", "POST", "/api/admin/subjects/template", { grades: ["ป.4"] }, { expect: 200 });
+  await call("admin", "POST", "/api/admin/courses/generate", {}, { expect: 200 });
+  const c = await env.DB.prepare("SELECT c.id FROM gr_courses c JOIN gr_subjects s ON s.id = c.subject_id WHERE s.grade_level = 'ป.4' AND c.classroom = '1' LIMIT 1").first();
+  const hr = (await call("admin", "GET", "/api/homeroom?grade=ป.4&room=1", null, { expect: 200 })).data;
+  const sid = hr.students.find((s) => s.enrollment_status === "enrolled").id;
+  const t2 = (await call("admin", "GET", `/api/courses/${c.id}/daily-attendance?term=2`, null, { expect: 200 })).data;
+  assert.ok(t2.days.length > 0);
+  assert.ok(t2.days.every((d) => d >= t2.start && d <= t2.end && ![0, 6].includes(new Date(`${d}T00:00:00Z`).getUTCDay())));
+  await call("admin", "PUT", "/api/homeroom/attendance?grade=ป.4&room=1", { grade: "ป.4", room: "1", changes: [{ student_id: sid, date: t2.days[0], code: "ข" }] }, { expect: 200 });
+  const again = (await call("admin", "GET", `/api/courses/${c.id}/daily-attendance?term=2`, null, { expect: 200 })).data;
+  assert.equal(again.marks[sid][t2.days[0]], "ข");
+  const t1 = (await call("admin", "GET", `/api/courses/${c.id}/daily-attendance?term=1`, null, { expect: 200 })).data;
+  assert.ok(t1.days.every((d) => d < t2.start));
+});

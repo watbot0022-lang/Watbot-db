@@ -36,7 +36,10 @@ try {
 const books = [];
 for (const [i, id] of ids.entries()) {
   status(`กำลังเตรียมเอกสาร ${i + 1}/${ids.length}…`);
-  try { books.push(await get(`/api/courses/${encodeURIComponent(id)}`)); } catch (e) { status(e.message); throw e; }
+  try {
+    const [b, daily] = await Promise.all([get(`/api/courses/${encodeURIComponent(id)}`), get(`/api/courses/${encodeURIComponent(id)}/daily-attendance?term=${TERM}`)]);
+    books.push({ ...b, daily });
+  } catch (e) { status(e.message); throw e; }
 }
 const first = books[0].course;
 const termTitle = TERM === 1 ? "ภาคเรียนที่ 1" : "ภาคเรียนที่ 2 (สรุปทั้งปี)";
@@ -321,8 +324,33 @@ function book(d) {
     <div class="note">เวลาเรียนรายวิชา ${td(c.hours_per_year)} ชั่วโมงต่อปี · ต้องมีเวลาเรียนไม่น้อยกว่าร้อยละ ${td(s.attendance_pass_pct)} จึงมีสิทธิ์รับการประเมิน${TERM === 1 ? ` (ตัดสินสิทธิ์สอบเมื่อจบปีในเล่มภาคเรียนที่ ${td(2)})` : ""} · ช่องว่าง = มาเรียนปกติ</div>
   </section>`;
 
-  const all = TERM === 1 ? cover + structure + attendance + indicatorPages + termSummary
-    : cover + structure + attendance + assessPage("rtw") + assessPage("trait") + indicatorPages + termSummary + yearSummary;
+  // ---------- 3b. บันทึกการมาเรียนรายวัน: 1 หน้าต่อเดือน (แนวนอน) ทุกวันเปิดเรียนของภาค ----------
+  // เฉพาะวันเปิดเรียน (ตัดเสาร์–อาทิตย์และวันหยุดตามปฏิทินวันหยุด) · ช่องว่าง = มาเรียน · ข ขาด · ล ลากิจ · ป ลาป่วย · ส มาสาย
+  const MONTHS = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
+  const DAY_CODES = ["ข", "ล", "ป", "ส"];
+  const dailyDays = d.daily?.days || [];
+  const byMonth = [];
+  for (const iso of dailyDays) { const m = iso.slice(0, 7); if (byMonth.at(-1)?.m !== m) byMonth.push({ m, days: [] }); byMonth.at(-1).days.push(iso); }
+  const dailyPages = byMonth.map(({ m, days }) => {
+    const [y, mo] = m.split("-").map(Number);
+    return `<section class="sheet land">${mark}
+    ${head(`บันทึกการมาเรียนรายวัน ภาคเรียนที่ ${td(TERM)} เดือน${MONTHS[mo - 1]} ${td(y + 543)}`)}
+    <table class="t small fit${dense(true)}" style="table-layout:fixed;width:100%">
+      <thead><tr><th rowspan="2" style="width:8mm">เลขที่</th><th rowspan="2" style="width:46mm">ชื่อ–สกุล</th>
+        <th colspan="${days.length}">วันที่</th><th colspan="${DAY_CODES.length}">รวมเดือนนี้ (วัน)</th></tr>
+        <tr>${days.map((iso) => `<th>${td(Number(iso.slice(8)))}</th>`).join("")}${DAY_CODES.map((k) => `<th style="width:7mm">${k}</th>`).join("")}</tr></thead>
+      <tbody>${d.students.map((x) => {
+        const mk = d.daily.marks?.[x.id] || {}, cnt = {};
+        const cells = days.map((iso) => { const v = mk[iso] || ""; if (v) cnt[v] = (cnt[v] || 0) + 1; return `<td class="c">${esc(v)}</td>`; }).join("");
+        return `<tr><td class="c">${td(x.number ?? "")}</td><td class="nm">${esc(x.name)}</td>${cells}${DAY_CODES.map((k) => `<td class="c">${cnt[k] ? td(cnt[k]) : ""}</td>`).join("")}</tr>`;
+      }).join("")}</tbody>
+    </table>
+    <div class="note">วันเปิดเรียนเดือนนี้ ${td(days.length)} วัน · ช่องว่าง = มาเรียน · ข = ขาด · ล = ลากิจ · ป = ลาป่วย · ส = มาสาย · จากบันทึกการมาเรียนของครูประจำชั้น</div>
+  </section>`;
+  }).join("");
+
+  const all = TERM === 1 ? cover + structure + attendance + dailyPages + indicatorPages + termSummary
+    : cover + structure + attendance + dailyPages + assessPage("rtw") + assessPage("trait") + indicatorPages + termSummary + yearSummary;
   // ฉบับร่าง: ท้ายทุกส่วนมีข้อความกำกับด้วย — หน้าสุดท้ายของตารางยาวที่มีเนื้อหาน้อยจะยังเห็นคำว่าฉบับร่างเต็มคำ
   return draft ? all.replaceAll("</section>", `<div class="draft-foot">ฉบับร่าง ยังไม่อนุมัติ — ใช้ตรวจทานเท่านั้น</div></section>`) : all;
 }
