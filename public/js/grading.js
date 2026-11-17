@@ -246,9 +246,9 @@ export function structureIssues(items, collectRatio, word = "ตัวชี้�
   return issues;
 }
 
-// คำเรียกช่องคะแนน: หลักสูตรใหม่ (ป.1–3) ใช้ "ผลการเรียนรู้", หลักสูตรเดิม (ป.4–6) ใช้ "ตัวชี้วัด"
-export function indicatorWord(gradeLevel) {
-  return /^ป\.[123]$/.test(String(gradeLevel || "")) ? "ผลการเรียนรู้" : "ตัวชี้วัด";
+// คำเรียกช่องคะแนน: หลักสูตรใหม่ (ป.1–3) และวิชาเพิ่มเติมทุกชั้น ใช้ "ผลการเรียนรู้" · วิชาพื้นฐาน ป.4–6 ใช้ "ตัวชี้วัด"
+export function indicatorWord(gradeLevel, subjectType) {
+  return /^ป\.[123]$/.test(String(gradeLevel || "")) || subjectType === "additional" ? "ผลการเรียนรู้" : "ตัวชี้วัด";
 }
 
 // ตรวจผลสอบแก้ตัว/เรียนซ้ำ ตามระเบียบการวัดผล (ประถม)

@@ -226,6 +226,9 @@ test("คลังตัวชี้วัดผูกรายวิชา: ว
   assert.equal(r.added, 3);
   // นำเข้าซ้ำไม่เพิ่ม
   assert.equal((await call("admin", "POST", "/api/admin/indicator-bank/import", { rows: [{ ...base, code: "X 1.1 ป.4/1", title: "ของวิชานี้", subject_code: c.code, kind: "ปลายทาง" }] }, { expect: 200 })).data.added, 0);
+  // วิชาเพิ่มเติมใช้ตัวชี้วัดเดียวกับวิชาพื้นฐาน (ชั้น กลุ่มสาระ รหัส ข้อความซ้ำ ต่างรหัสวิชา) → ต้องเพิ่มได้ ไม่ถูกข้าม
+  assert.equal((await call("admin", "POST", "/api/admin/indicator-bank/import", { rows: [{ ...base, code: "X 1.1 ป.4/1", title: "ของวิชานี้", subject_code: other, kind: "ปลายทาง" }] }, { expect: 200 })).data.added, 1);
+  assert.equal(env.DB.raw.prepare("SELECT COUNT(*) n FROM gr_indicator_bank WHERE title = 'ของวิชานี้'").get().n, 2);
   // แถวผิด → แจ้งรายแถว ไม่บันทึกอะไร
   assert.equal((await call("admin", "POST", "/api/admin/indicator-bank/import", { rows: [{ ...base, title: "x", kind: "อื่น ๆ" }] }, { expect: 200 })).data.errors.length, 1);
   assert.equal((await call("admin", "POST", "/api/admin/indicator-bank/import", { rows: [{ ...base, title: "x", subject_code: "abc" }, { ...base, title: "y" }] }, { expect: 200 })).data.errors.length, 1);
@@ -239,7 +242,7 @@ test("คลังตัวชี้วัดผูกรายวิชา: ว
   const groups = (await call("admin", "GET", "/api/admin/indicator-bank", null, { expect: 200 })).data.groups;
   assert.ok(groups.find((g) => g.subject_code === c.code).final >= 1);
   const list = (await call("admin", "GET", `/api/admin/indicator-bank/list?grade=${encodeURIComponent(c.grade_level)}&area=${encodeURIComponent(c.learning_area)}&subject=${encodeURIComponent(other)}`, null, { expect: 200 })).data.indicators;
-  assert.equal(list.length, 1);
+  assert.equal(list.length, 2);
   await call("t1", "DELETE", `/api/admin/indicator-bank/${list[0].id}`, null, { expect: 403 });
   await call("admin", "DELETE", `/api/admin/indicator-bank/${list[0].id}`, null, { expect: 200 });
 });
@@ -268,4 +271,19 @@ test("ตัวชี้วัด ป.4–6 จากหลักสูตร 25
   const bank = (await call("admin", "GET", `/api/courses/${hist.id}/bank`, null, { expect: 200 })).data.indicators;
   assert.equal(bank.length, 8);
   assert.ok(bank.every((b) => b.code.startsWith("ส 4.")));
+});
+
+test("วิชาเพิ่มเติม: เห็นผลการเรียนรู้จากคลัง แม้รหัสวิชาในคลังไม่ตรง (อ14209 ↔ อ14204) และใช้คำว่า ผลการเรียนรู้", async () => {
+  const { env, call } = await setup();
+  await call("admin", "POST", "/api/admin/subjects/template", { grades: ["ป.4"] }, { expect: 200 });
+  await call("admin", "POST", "/api/admin/import/subjects", { rows: [{ grade_level: "ป.4", code: "อ14209", name: "ภาษาอังกฤษเพิ่มเติม", learning_area: "ภาษาต่างประเทศ", subject_type: "เพิ่มเติม", hours_per_year: 40 }] }, { expect: 200 });
+  await call("admin", "POST", "/api/admin/courses/generate", {}, { expect: 200 });
+  const c = await env.DB.prepare("SELECT c.id, s.subject_type, s.code FROM gr_courses c JOIN gr_subjects s ON s.id = c.subject_id WHERE s.code = 'อ14209' LIMIT 1").first();
+  const rows = ["ข้อ 1", "ข้อ 2"].map((code, i) => ({ grade_level: "ป.4", learning_area: "ภาษาต่างประเทศ", subject_code: "อ14204", kind: "ผลการเรียนรู้", code, title: `ผลการเรียนรู้ทดสอบ ${i + 1}` }));
+  assert.equal((await call("admin", "POST", "/api/admin/indicator-bank/import", { rows }, { expect: 200 })).data.added, 2);
+  const bank = (await call("admin", "GET", `/api/courses/${c.id}/bank`, null, { expect: 200 })).data.indicators;
+  // เห็นเฉพาะที่โรงเรียนนำเข้า (ไม่ปนชุดตั้งต้นของวิชาอื่นหรือวิชาพื้นฐาน)
+  assert.deepEqual(bank.map((b) => b.code), ["ข้อ 1", "ข้อ 2"]);
+  const d = (await call("admin", "GET", `/api/courses/${c.id}`, null, { expect: 200 })).data;
+  assert.equal(d.course.subject_type, "additional");
 });
