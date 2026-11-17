@@ -58,7 +58,7 @@ function splitCode(code) {
 
 function book(d) {
   const c = d.course, s = d.settings;
-  const W = indicatorWord(c.grade_level);
+  const W = indicatorWord(c.grade_level, c.subject_type);
   const active = d.students.filter((x) => x.enrollment_status === "enrolled");
   // ห้องใหญ่ (เกิน 25 คน): ตัวอักษร/ระยะบรรทัดเล็กลง ให้ตารางรายคนจบในหน้าเดียว (แนวนอนบีบมากกว่าแนวตั้ง)
   const dense = (land) => d.students.length > 25 ? (land ? " dense-l" : " dense") : "";

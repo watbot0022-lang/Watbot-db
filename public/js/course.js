@@ -29,7 +29,7 @@ try {
   throw err;
 }
 document.getElementById("main").hidden = false;
-const W = indicatorWord(data.course.grade_level); // ป.1–3 = ผลการเรียนรู้, ป.4–6 = ตัวชี้วัด
+const W = indicatorWord(data.course.grade_level, data.course.subject_type); // ป.1–3 และวิชาเพิ่มเติม = ผลการเรียนรู้, พื้นฐาน ป.4–6 = ตัวชี้วัด
 if (!data.items.some((i) => i.term_number === T) && (tab === "sheet" || tab === "rem")) tab = "setup";
 window.addEventListener("beforeunload", (e) => {
   if (pending.size || saving || invalidCount()) { e.preventDefault(); e.returnValue = ""; }

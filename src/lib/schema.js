@@ -8,7 +8,7 @@ import { DEFAULT_ACTIVITIES } from "../../public/js/grading.js";
 // ตั้งใจไม่ใส่ FOREIGN KEY ไปยังตารางของระบบบริหารโรงเรียน (users, students, academic_years)
 // เพื่อไม่ให้การลบผู้ใช้/นักเรียนในระบบนั้นล้มเหลวเพราะติดข้อมูลของระบบนี้
 
-export const SCHEMA_VERSION = "wb-8"; // wb-8 = กิจกรรม/ตัวชี้วัดตามหลักสูตรโรงเรียน 2568 แทน 4 กิจกรรมเริ่มต้นที่ยังไม่ถูกแก้ · wb-7 = กิจกรรมพัฒนาผู้เรียน + ตัวชี้วัด ฝ่ายวัดผลกำหนดรายปี/ชั้น (gr_activities) · wb-6 = ค่าเริ่มต้นตัดเกรดรายภาค ภาคละ 100 70:30 + ปรับวิชาเดิมครั้งเดียว · wb-5 = gr_subjects.grading_mode ฝ่ายวัดผลกำหนดรายวิชา (wb-4 gr_courses.grading_mode เลิกใช้) · wb-2 = ตาราง gr-22 ของป่าเด็ง (gr_guard, data_rev) · wb-3 = gr-23 กิจกรรมรายภาค
+export const SCHEMA_VERSION = "wb-9"; // wb-9 = คลังตัวชี้วัดแยกตามรหัสวิชา (วิชาเพิ่มเติมที่ตัวชี้วัดซ้ำวิชาพื้นฐานถูกข้ามตอนนำเข้า) · wb-8 = กิจกรรม/ตัวชี้วัดตามหลักสูตรโรงเรียน 2568 แทน 4 กิจกรรมเริ่มต้นที่ยังไม่ถูกแก้ · wb-7 = กิจกรรมพัฒนาผู้เรียน + ตัวชี้วัด ฝ่ายวัดผลกำหนดรายปี/ชั้น (gr_activities) · wb-6 = ค่าเริ่มต้นตัดเกรดรายภาค ภาคละ 100 70:30 + ปรับวิชาเดิมครั้งเดียว · wb-5 = gr_subjects.grading_mode ฝ่ายวัดผลกำหนดรายวิชา (wb-4 gr_courses.grading_mode เลิกใช้) · wb-2 = ตาราง gr-22 ของป่าเด็ง (gr_guard, data_rev) · wb-3 = gr-23 กิจกรรมรายภาค
 
 // ตารางพื้นฐาน (ป่าเด็งใช้ร่วมกับระบบทะเบียน banpadeng-school-db) — วัดโบสถ์ทำงานเดี่ยว ระบบจึงสร้างเอง
 export const CORE_SQL = [
@@ -417,6 +417,30 @@ export async function migrateLateCode(env) {
   ].map((sql) => env.DB.prepare(sql)));
 }
 
+// wb-9: คลังตัวชี้วัดเดิมห้ามซ้ำ (ชั้น, กลุ่มสาระ, รหัส, ข้อความ) ไม่รวมรหัสวิชา — วิชาเพิ่มเติมที่ใช้ตัวชี้วัดเดียวกับวิชาพื้นฐาน
+// จึงถูกข้ามตอนนำเข้า (ไม่มีตัวชี้วัดในรายวิชาเลย) → สร้างตารางใหม่ ห้ามซ้ำโดยนับรหัสวิชาด้วย · ทำครั้งเดียว (ดูจาก UNIQUE ของตารางเดิม)
+export async function migrateBankUnique(env) {
+  const row = await env.DB.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'gr_indicator_bank'").first();
+  if (!row?.sql || !/UNIQUE\s*\(\s*grade_level,\s*learning_area,\s*code,\s*title\s*\)/.test(row.sql)) return;
+  await env.DB.batch([
+    `DROP TABLE IF EXISTS gr_indicator_bank_v9`,
+    `CREATE TABLE gr_indicator_bank_v9 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      learning_area TEXT NOT NULL,
+      grade_level TEXT NOT NULL,
+      code TEXT NOT NULL DEFAULT '',
+      title TEXT NOT NULL,
+      created_by INTEGER, created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      subject_code TEXT, kind TEXT)`,
+    `INSERT INTO gr_indicator_bank_v9 (id, learning_area, grade_level, code, title, created_by, created_at, subject_code, kind)
+       SELECT id, learning_area, grade_level, code, title, created_by, created_at, subject_code, kind FROM gr_indicator_bank`,
+    `DROP TABLE gr_indicator_bank`,
+    `ALTER TABLE gr_indicator_bank_v9 RENAME TO gr_indicator_bank`,
+    `CREATE INDEX IF NOT EXISTS idx_gr_bank_lookup ON gr_indicator_bank(grade_level, learning_area)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_gr_bank_item ON gr_indicator_bank(grade_level, learning_area, COALESCE(subject_code, ''), code, title)`,
+  ].map((sql) => env.DB.prepare(sql)));
+}
+
 // gr-23: กิจกรรมพัฒนาผู้เรียนบันทึกรายภาค — คีย์เดิมก่อนแยกภาค (act_scout_t) ย้ายเป็นภาคเรียนที่ 1 (act_scout_t1)
 // ผลทั้งปีไม่เปลี่ยน (มผ เดิมยังเป็นมผ) · ทำซ้ำได้: ไม่มีคีย์เดิมเหลือก็ไม่มีอะไรเปลี่ยน
 export async function migrateActivityTerms(env) {
@@ -476,6 +500,7 @@ export async function ensureSchema(env) {
     await addMissingColumns(env);
     await migrateLateCode(env);
     await migrateActivityTerms(env);
+    await migrateBankUnique(env);
     await seedIndicatorBank(env);
     await migrateTermDefault(env);
     await migrateActivityCurriculum(env);

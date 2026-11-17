@@ -12,7 +12,7 @@ function serializeBundle(b, user) {
     edit_request: b.edit_request || null,
     edits: b.edits || [],
     can_approve: ADMIN_ROLES.includes(user.role),
-    structure_issues: structureIssues(b.items, b.course.collect_ratio, indicatorWord(b.course.grade_level), b.course.grading_mode),
+    structure_issues: structureIssues(b.items, b.course.collect_ratio, indicatorWord(b.course.grade_level, b.course.subject_type), b.course.grading_mode),
     assessments: b.assessments || {},
     settings: b.settings,
     items: b.items,
@@ -425,10 +425,22 @@ async function handleCoursesInner(request, env, user, parts, method, url) {
 
   if (sub === "bank" && method === "GET") {
     const course = await assertCourseAccess(env, user, id);
-    const { results } = await env.DB.prepare(
-      `SELECT id, code, title, kind FROM gr_indicator_bank
-        WHERE grade_level = ? AND learning_area = ? AND (subject_code IS NULL OR subject_code = '' OR subject_code = ?) LIMIT 500`
-    ).bind(course.grade_level, course.learning_area, String(course.code || "").replace(/\s+/g, "")).all();
+    const code = String(course.code || "").replace(/\s+/g, "");
+    // ของรายวิชานี้ (รหัสวิชาตรง ไม่ต้องตรงกลุ่มสาระ) + ของกลางในกลุ่มสาระ (ไม่ระบุรหัสวิชา)
+    let { results } = await env.DB.prepare(
+      `SELECT id, code, title, kind, subject_code FROM gr_indicator_bank
+        WHERE grade_level = ? AND ((learning_area = ? AND (subject_code IS NULL OR subject_code = '')) OR subject_code = ?) LIMIT 500`
+    ).bind(course.grade_level, course.learning_area, code).all();
+    // วิชาเพิ่มเติมที่รหัสวิชาในคลังไม่ตรงกับรายวิชา (เช่น ในระบบ อ12201 แต่คลังใส่ อ12202): ใช้ของวิชาเพิ่มเติม
+    // ชั้นเดียวกัน อักษรนำเดียวกัน (กลุ่มสาระเดียวกัน) ที่โรงเรียนนำเข้าเอง (ไม่รวมชุดตั้งต้น) แทน — เฉพาะเมื่อไม่มีของรหัสวิชานี้เลย
+    const m = /^([ก-ฮ])1(\d)2\d\d$/.exec(code);
+    if (course.subject_type === "additional" && m && !results.some((r) => r.subject_code === code)) {
+      const { results: alt } = await env.DB.prepare(
+        `SELECT id, code, title, kind, subject_code FROM gr_indicator_bank WHERE grade_level = ? AND subject_code GLOB ? AND created_by IS NOT NULL LIMIT 500`
+      ).bind(course.grade_level, `${m[1]}1${m[2]}2[0-9][0-9]`).all();
+      results = results.concat(alt);
+    }
+    results = results.map(({ subject_code, ...r }) => r);
     // เรียงรหัสแบบตัวเลข: ท 1.1 ป.4/2 มาก่อน ท 1.1 ป.4/10 · ตัวชี้วัดที่ไม่มีรหัสไว้ท้าย ตามลำดับที่เพิ่ม
     results.sort((a, b) => (!a.code) - (!b.code) || compareThai(a.code, b.code) || a.id - b.id);
     return json({ indicators: results });
@@ -667,7 +679,7 @@ async function handleCoursesInner(request, env, user, parts, method, url) {
     const course = await assertCourseAccess(env, user, id, { write: true });
     const bundle = await courseBundle(env, course);
     if (!bundle.items.length) fail(400, "ยังไม่ได้ตั้งโครงสร้างคะแนน");
-    const issues = structureIssues(bundle.items, course.collect_ratio, indicatorWord(course.grade_level), course.grading_mode);
+    const issues = structureIssues(bundle.items, course.collect_ratio, indicatorWord(course.grade_level, course.subject_type), course.grading_mode);
     if (issues.length) return json({ error: `ยืนยันผลไม่ได้: ${issues.join(" และ ")}`, structure_issues: issues }, 400);
     const b = await readJson(request);
     // ผลการเรียนคิดจาก 2 ภาค: ภาคที่ยังไม่มีช่องคะแนนและนักเรียนไม่มีคะแนนยกมา → ส่งแล้วเกรดจะยังเป็น "-" (เช่น ห้องนำร่องที่ภาค 1 อยู่ใน Q-Info)

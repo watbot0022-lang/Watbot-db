@@ -510,10 +510,10 @@ export async function handleAdmin(request, env, user, parts, method, url) {
     if (idPart && action === "lock" && method === "POST") {
       const id = intParam(idPart);
       // บังคับส่งก็ต้องผ่านการตรวจโครงสร้าง (คะแนนเต็มตรงสัดส่วน) — ไม่อย่างนั้นระบบต้องย่อขยายคะแนนเอง ขัดกับกติกาห้ามปัดเศษ
-      const info = await env.DB.prepare("SELECT s.collect_ratio, s.grade_level, s.grading_mode FROM gr_courses c JOIN gr_subjects s ON s.id = c.subject_id WHERE c.id = ?").bind(id).first();
+      const info = await env.DB.prepare("SELECT s.collect_ratio, s.grade_level, s.grading_mode, s.subject_type FROM gr_courses c JOIN gr_subjects s ON s.id = c.subject_id WHERE c.id = ?").bind(id).first();
       if (!info) fail(404, "ไม่พบรายวิชา");
       const { results: its } = await env.DB.prepare("SELECT term_number, kind, max_score FROM gr_items WHERE course_id = ?").bind(id).all();
-      const issues = structureIssues(its, info.collect_ratio, indicatorWord(info.grade_level), info.grading_mode);
+      const issues = structureIssues(its, info.collect_ratio, indicatorWord(info.grade_level, info.subject_type), info.grading_mode);
       if (issues.length) fail(400, `ล็อกไม่ได้: ${issues.join(" และ ")}`);
       const r = await env.DB.prepare("UPDATE gr_courses SET locked = 1, submitted_at = COALESCE(submitted_at, datetime('now')), submitted_by = COALESCE(submitted_by, ?) WHERE id = ?").bind(user.id, id).run();
       if (!r.meta?.changes) fail(404, "ไม่พบรายวิชา");
@@ -612,9 +612,10 @@ export async function handleAdmin(request, env, user, parts, method, url) {
         if (!title) { err("ไม่มีข้อความตัวชี้วัด"); continue; }
         clean.push([area, grade, code, title, subj || null, kind || null]);
       }
-      const { results: have } = await env.DB.prepare("SELECT grade_level, learning_area, code, title FROM gr_indicator_bank").all();
-      const seen = new Set(have.map((x) => `${x.grade_level}|${x.learning_area}|${x.code || ""}|${x.title}`));
-      const fresh = clean.filter((c) => { const k = `${c[1]}|${c[0]}|${c[2]}|${c[3]}`; if (seen.has(k)) return false; seen.add(k); return true; });
+      // ซ้ำ = ชั้น กลุ่มสาระ รหัสวิชา รหัสตัวชี้วัด และข้อความเดียวกัน (วิชาเพิ่มเติมใช้ตัวชี้วัดเดียวกับวิชาพื้นฐานได้)
+      const { results: have } = await env.DB.prepare("SELECT grade_level, learning_area, COALESCE(subject_code, '') AS subject_code, code, title FROM gr_indicator_bank").all();
+      const seen = new Set(have.map((x) => `${x.grade_level}|${x.learning_area}|${x.subject_code}|${x.code || ""}|${x.title}`));
+      const fresh = clean.filter((c) => { const k = `${c[1]}|${c[0]}|${c[4] || ""}|${c[2]}|${c[3]}`; if (seen.has(k)) return false; seen.add(k); return true; });
       if (b.dry_run || errors.length) return json({ ok: !errors.length, dry_run: true, errors, summary: { add: fresh.length, update: 0, skip: clean.length - fresh.length } });
       await batchAll(env, fresh.map((c) => env.DB.prepare("INSERT OR IGNORE INTO gr_indicator_bank (learning_area, grade_level, code, title, subject_code, kind, created_by) VALUES (?,?,?,?,?,?,?)").bind(...c, user.id)));
       await audit(env, user, "bank.import", { rows: clean.length, added: fresh.length });
