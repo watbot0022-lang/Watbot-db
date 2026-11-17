@@ -428,19 +428,9 @@ async function handleCoursesInner(request, env, user, parts, method, url) {
     const code = String(course.code || "").replace(/\s+/g, "");
     // ของรายวิชานี้ (รหัสวิชาตรง ไม่ต้องตรงกลุ่มสาระ) + ของกลางในกลุ่มสาระ (ไม่ระบุรหัสวิชา)
     let { results } = await env.DB.prepare(
-      `SELECT id, code, title, kind, subject_code FROM gr_indicator_bank
+      `SELECT id, code, title, kind FROM gr_indicator_bank
         WHERE grade_level = ? AND ((learning_area = ? AND (subject_code IS NULL OR subject_code = '')) OR subject_code = ?) LIMIT 500`
     ).bind(course.grade_level, course.learning_area, code).all();
-    // วิชาเพิ่มเติมที่รหัสวิชาในคลังไม่ตรงกับรายวิชา (เช่น ในระบบ อ12201 แต่คลังใส่ อ12202): ใช้ของวิชาเพิ่มเติม
-    // ชั้นเดียวกัน อักษรนำเดียวกัน (กลุ่มสาระเดียวกัน) ที่โรงเรียนนำเข้าเอง (ไม่รวมชุดตั้งต้น) แทน — เฉพาะเมื่อไม่มีของรหัสวิชานี้เลย
-    const m = /^([ก-ฮ])1(\d)2\d\d$/.exec(code);
-    if (course.subject_type === "additional" && m && !results.some((r) => r.subject_code === code)) {
-      const { results: alt } = await env.DB.prepare(
-        `SELECT id, code, title, kind, subject_code FROM gr_indicator_bank WHERE grade_level = ? AND subject_code GLOB ? AND created_by IS NOT NULL LIMIT 500`
-      ).bind(course.grade_level, `${m[1]}1${m[2]}2[0-9][0-9]`).all();
-      results = results.concat(alt);
-    }
-    results = results.map(({ subject_code, ...r }) => r);
     // เรียงรหัสแบบตัวเลข: ท 1.1 ป.4/2 มาก่อน ท 1.1 ป.4/10 · ตัวชี้วัดที่ไม่มีรหัสไว้ท้าย ตามลำดับที่เพิ่ม
     results.sort((a, b) => (!a.code) - (!b.code) || compareThai(a.code, b.code) || a.id - b.id);
     return json({ indicators: results });
