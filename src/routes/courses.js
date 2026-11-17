@@ -1,5 +1,5 @@
 import { json, readJson, fail, requireUser, intParam, text, audit, batchAll, guardedBatch, decimalOf } from "../lib/http.js";
-import { assertCourseAccess, courseBundle, loadCourse, canViewCourse, studentName, isLeft } from "../lib/data.js";
+import { assertCourseAccess, courseBundle, loadCourse, canViewCourse, studentName, isLeft, roomRoster, schoolCalendar } from "../lib/data.js";
 import { clean, computeStudentResult, resultWithAttendance, validateRemedial, structureIssues, indicatorWord, indicatorResult, submissionChecks } from "../../public/js/grading.js";
 import { gradeSettings, getSettings, assessmentsFor, ITEM_ORDER_SQL, ITEM_ORDER_BY, compareThai } from "../lib/data.js";
 import { ADMIN_ROLES } from "../lib/http.js";
@@ -421,6 +421,23 @@ async function handleCoursesInner(request, env, user, parts, method, url) {
     ).bind(course.id, course.subject_id, course.code, course.grade_level).all();
     results.sort((a, b) => b.year_be - a.year_be || compareThai(a.classroom, b.classroom));
     return json({ courses: results.filter((r) => r.item_count > 0) });
+  }
+
+  // ---------- บันทึกมาเรียนรายวันของนักเรียนในรายวิชา (ปพ.5 หน้ารายวัน) — เฉพาะวันเปิดเรียนของภาคที่เลือก ----------
+  if (sub === "daily-attendance" && method === "GET") {
+    const course = await assertCourseAccess(env, user, id);
+    const term = url.searchParams.get("term") === "1" ? 1 : 2;
+    const cal = await schoolCalendar(env, course.academic_year_id);
+    const t = cal.terms.find((x) => x.term_number === term);
+    const days = t ? cal.days.filter((d) => d >= t.start_date && d <= t.end_date) : [];
+    const ids = (await roomRoster(env, course.academic_year_id, course.grade_level, course.classroom)).map((s) => s.id), marks = {};
+    for (let i = 0; i < ids.length && days.length; i += 90) {
+      const chunk = ids.slice(i, i + 90);
+      const { results } = await env.DB.prepare(`SELECT student_id, att_date, code FROM gr_attendance WHERE academic_year_id = ? AND att_date BETWEEN ? AND ?
+        AND student_id IN (${chunk.map(() => "?").join(",")})`).bind(course.academic_year_id, days[0], days.at(-1), ...chunk).all();
+      for (const r of results) (marks[r.student_id] ||= {})[r.att_date] = r.code;
+    }
+    return json({ term, start: t?.start_date || null, end: t?.end_date || null, days, marks });
   }
 
   if (sub === "bank" && method === "GET") {
