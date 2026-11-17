@@ -2,13 +2,14 @@ import BANK_2569 from "../data/indicator-bank-2569.js";
 import BANK_2569_P13 from "../data/indicator-bank-2569-p13.js";
 import BANK_2569_KINDER from "../data/indicator-bank-2569-kinder.js";
 import { curriculumActivities } from "../data/activities-curriculum.js";
+import ADDITIONAL_2568 from "../data/additional-2568.js";
 import { DEFAULT_ACTIVITIES } from "../../public/js/grading.js";
 // ตารางของระบบรายงานผลการเรียน — ขึ้นต้นด้วย gr_ ทั้งหมด เพื่อไม่ชนกับตารางเดิมของ banpadeng-school-db
 // สร้างอัตโนมัติครั้งแรกที่ Worker ทำงาน (CREATE ... IF NOT EXISTS ไม่แตะข้อมูลเดิม)
 // ตั้งใจไม่ใส่ FOREIGN KEY ไปยังตารางของระบบบริหารโรงเรียน (users, students, academic_years)
 // เพื่อไม่ให้การลบผู้ใช้/นักเรียนในระบบนั้นล้มเหลวเพราะติดข้อมูลของระบบนี้
 
-export const SCHEMA_VERSION = "wb-9"; // wb-9 = คลังตัวชี้วัดแยกตามรหัสวิชา (วิชาเพิ่มเติมที่ตัวชี้วัดซ้ำวิชาพื้นฐานถูกข้ามตอนนำเข้า) · wb-8 = กิจกรรม/ตัวชี้วัดตามหลักสูตรโรงเรียน 2568 แทน 4 กิจกรรมเริ่มต้นที่ยังไม่ถูกแก้ · wb-7 = กิจกรรมพัฒนาผู้เรียน + ตัวชี้วัด ฝ่ายวัดผลกำหนดรายปี/ชั้น (gr_activities) · wb-6 = ค่าเริ่มต้นตัดเกรดรายภาค ภาคละ 100 70:30 + ปรับวิชาเดิมครั้งเดียว · wb-5 = gr_subjects.grading_mode ฝ่ายวัดผลกำหนดรายวิชา (wb-4 gr_courses.grading_mode เลิกใช้) · wb-2 = ตาราง gr-22 ของป่าเด็ง (gr_guard, data_rev) · wb-3 = gr-23 กิจกรรมรายภาค
+export const SCHEMA_VERSION = "wb-10"; // wb-10 = ผลการเรียนรู้วิชาเพิ่มเติมของวัดโบสถ์ (แก้รหัสวิชาที่เลื่อนผิด) แทนชุดของบ้านป่าเด็ง · wb-9 = คลังตัวชี้วัดแยกตามรหัสวิชา (วิชาเพิ่มเติมที่ตัวชี้วัดซ้ำวิชาพื้นฐานถูกข้ามตอนนำเข้า) · wb-8 = กิจกรรม/ตัวชี้วัดตามหลักสูตรโรงเรียน 2568 แทน 4 กิจกรรมเริ่มต้นที่ยังไม่ถูกแก้ · wb-7 = กิจกรรมพัฒนาผู้เรียน + ตัวชี้วัด ฝ่ายวัดผลกำหนดรายปี/ชั้น (gr_activities) · wb-6 = ค่าเริ่มต้นตัดเกรดรายภาค ภาคละ 100 70:30 + ปรับวิชาเดิมครั้งเดียว · wb-5 = gr_subjects.grading_mode ฝ่ายวัดผลกำหนดรายวิชา (wb-4 gr_courses.grading_mode เลิกใช้) · wb-2 = ตาราง gr-22 ของป่าเด็ง (gr_guard, data_rev) · wb-3 = gr-23 กิจกรรมรายภาค
 
 // ตารางพื้นฐาน (ป่าเด็งใช้ร่วมกับระบบทะเบียน banpadeng-school-db) — วัดโบสถ์ทำงานเดี่ยว ระบบจึงสร้างเอง
 export const CORE_SQL = [
@@ -441,6 +442,23 @@ export async function migrateBankUnique(env) {
   ].map((sql) => env.DB.prepare(sql)));
 }
 
+// wb-10 (ครั้งเดียว): วิชาเพิ่มเติม ป.1–6 ของวัดโบสถ์ — ต่อต้านการทุจริต ส1x201 · หน้าที่พลเมือง ส1x202 · ภาษาอังกฤษเพิ่มเติม อ1x201
+// 1) ลบชุดตั้งต้นวิชาเพิ่มเติมของบ้านป่าเด็ง (ใส่โดยระบบ created_by ว่าง) 2) ลบแถวที่ฝ่ายวัดผลนำเข้าด้วยรหัสวิชาที่เลื่อนผิด
+// (ตรงชั้น+รหัสผิด+ข้อความ เท่านั้น) 3) ใส่ชุดที่รหัสถูก (ซ้ำกับที่มีอยู่ข้าม)
+export async function migrateAdditional2568(env) {
+  const KEY = "wb_additional_2568";
+  if (await env.DB.prepare("SELECT 1 FROM system_settings WHERE setting_key = ?").bind(KEY).first()) return;
+  const stmts = [env.DB.prepare("DELETE FROM gr_indicator_bank WHERE created_by IS NULL AND subject_code GLOB '[ก-ฮ]1[1-6]2[0-9][0-9]'")];
+  for (const [grade, , right, , , title, wrong] of ADDITIONAL_2568) {
+    if (wrong !== right) stmts.push(env.DB.prepare("DELETE FROM gr_indicator_bank WHERE grade_level = ? AND REPLACE(COALESCE(subject_code, ''), ' ', '') = ? AND TRIM(title) = ?").bind(grade, wrong, title));
+  }
+  for (const [grade, area, subj, kind, code, title] of ADDITIONAL_2568) {
+    stmts.push(env.DB.prepare("INSERT OR IGNORE INTO gr_indicator_bank (learning_area, grade_level, code, title, subject_code, kind) VALUES (?,?,?,?,?,?)").bind(area, grade, code, title, subj, kind));
+  }
+  stmts.push(env.DB.prepare("INSERT INTO system_settings (setting_key, setting_value, updated_at) VALUES (?, '1', datetime('now')) ON CONFLICT(setting_key) DO NOTHING").bind(KEY));
+  for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
+}
+
 // gr-23: กิจกรรมพัฒนาผู้เรียนบันทึกรายภาค — คีย์เดิมก่อนแยกภาค (act_scout_t) ย้ายเป็นภาคเรียนที่ 1 (act_scout_t1)
 // ผลทั้งปีไม่เปลี่ยน (มผ เดิมยังเป็นมผ) · ทำซ้ำได้: ไม่มีคีย์เดิมเหลือก็ไม่มีอะไรเปลี่ยน
 export async function migrateActivityTerms(env) {
@@ -502,6 +520,7 @@ export async function ensureSchema(env) {
     await migrateActivityTerms(env);
     await migrateBankUnique(env);
     await seedIndicatorBank(env);
+    await migrateAdditional2568(env);
     await migrateTermDefault(env);
     await migrateActivityCurriculum(env);
     await env.DB.prepare(`INSERT INTO system_settings (setting_key, setting_value, updated_at)

@@ -250,7 +250,7 @@ test("คลังตัวชี้วัดผูกรายวิชา: ว
 test("ตัวชี้วัด ป.4–6 จากหลักสูตร 2569 อยู่ในคลังตั้งแต่ติดตั้ง ใส่ครั้งเดียว และแยกตามรายวิชา", async () => {
   const { env, call } = await setup();
   const n = async (sql, ...b) => (await env.DB.prepare(sql).bind(...b).first()).n;
-  assert.equal(await n("SELECT COUNT(*) AS n FROM gr_indicator_bank WHERE subject_code IS NOT NULL AND grade_level IN ('ป.4','ป.5','ป.6')"), 673);
+  assert.equal(await n("SELECT COUNT(*) AS n FROM gr_indicator_bank WHERE subject_code IS NOT NULL AND grade_level IN ('ป.4','ป.5','ป.6')"), 664); // 583 ชุดตั้งต้น (ตัดวิชาเพิ่มเติมบ้านป่าเด็ง) + 81 วิชาเพิ่มเติมวัดโบสถ์
   assert.equal(await n("SELECT COUNT(*) AS n FROM gr_indicator_bank WHERE kind = 'ผลลัพธ์การเรียนรู้' AND grade_level IN ('ป.1','ป.2','ป.3')"), 181);
   assert.equal(await n("SELECT COUNT(*) AS n FROM gr_indicator_bank WHERE subject_code = 'ค13101'"), 28);
   assert.equal(await n("SELECT COUNT(*) AS n FROM gr_indicator_bank WHERE kind = 'ความสามารถผู้เรียน' AND grade_level = 'อ.3'"), 33);
@@ -273,17 +273,44 @@ test("ตัวชี้วัด ป.4–6 จากหลักสูตร 25
   assert.ok(bank.every((b) => b.code.startsWith("ส 4.")));
 });
 
-test("วิชาเพิ่มเติม: เห็นผลการเรียนรู้จากคลัง แม้รหัสวิชาในคลังไม่ตรง (อ14209 ↔ อ14204) และใช้คำว่า ผลการเรียนรู้", async () => {
+test("วิชาเพิ่มเติมวัดโบสถ์: ผลการเรียนรู้ตามรหัสวิชาที่ถูก (ไม่ใช่ชุดบ้านป่าเด็ง) และใช้คำว่า ผลการเรียนรู้", async () => {
   const { env, call } = await setup();
   await call("admin", "POST", "/api/admin/subjects/template", { grades: ["ป.4"] }, { expect: 200 });
-  await call("admin", "POST", "/api/admin/import/subjects", { rows: [{ grade_level: "ป.4", code: "อ14209", name: "ภาษาอังกฤษเพิ่มเติม", learning_area: "ภาษาต่างประเทศ", subject_type: "เพิ่มเติม", hours_per_year: 40 }] }, { expect: 200 });
+  const add = (grade_level, code, name, learning_area) => ({ grade_level, code, name, learning_area, subject_type: "เพิ่มเติม", hours_per_year: 40 });
+  await call("admin", "POST", "/api/admin/import/subjects", { rows: [
+    add("ป.4", "อ14201", "ภาษาอังกฤษเพิ่มเติม", "ภาษาต่างประเทศ"), add("ป.4", "ส14201", "ต่อต้านการทุจริต", "สังคมศึกษา ศาสนาและวัฒนธรรม"),
+    add("ป.4", "ส14202", "หน้าที่พลเมือง", "สังคมศึกษา ศาสนาและวัฒนธรรม")] }, { expect: 200 });
   await call("admin", "POST", "/api/admin/courses/generate", {}, { expect: 200 });
-  const c = await env.DB.prepare("SELECT c.id, s.subject_type, s.code FROM gr_courses c JOIN gr_subjects s ON s.id = c.subject_id WHERE s.code = 'อ14209' LIMIT 1").first();
-  const rows = ["ข้อ 1", "ข้อ 2"].map((code, i) => ({ grade_level: "ป.4", learning_area: "ภาษาต่างประเทศ", subject_code: "อ14204", kind: "ผลการเรียนรู้", code, title: `ผลการเรียนรู้ทดสอบ ${i + 1}` }));
-  assert.equal((await call("admin", "POST", "/api/admin/indicator-bank/import", { rows }, { expect: 200 })).data.added, 2);
-  const bank = (await call("admin", "GET", `/api/courses/${c.id}/bank`, null, { expect: 200 })).data.indicators;
-  // เห็นเฉพาะที่โรงเรียนนำเข้า (ไม่ปนชุดตั้งต้นของวิชาอื่นหรือวิชาพื้นฐาน)
-  assert.deepEqual(bank.map((b) => b.code), ["ข้อ 1", "ข้อ 2"]);
-  const d = (await call("admin", "GET", `/api/courses/${c.id}`, null, { expect: 200 })).data;
-  assert.equal(d.course.subject_type, "additional");
+  const bankOf = async (code) => {
+    const c = await env.DB.prepare("SELECT c.id FROM gr_courses c JOIN gr_subjects s ON s.id = c.subject_id WHERE s.code = ? LIMIT 1").bind(code).first();
+    return (await call("admin", "GET", `/api/courses/${c.id}/bank`, null, { expect: 200 })).data.indicators;
+  };
+  const eng = await bankOf("อ14201");
+  assert.equal(eng.length, 8);
+  assert.ok(eng.every((b) => b.kind === "ผลการเรียนรู้"));
+  assert.ok(eng.some((b) => b.title === "นักเรียนสามารถใช้และเข้าใจไวยากรณ์ภาษาอังกฤษพื้นฐานได้"));
+  const anti = await bankOf("ส14201"), civic = await bankOf("ส14202");
+  assert.equal(anti.length, 9);
+  assert.equal(civic.length, 10);
+  assert.ok(anti.every((b) => !civic.some((x) => x.title === b.title)));
+  // ชุดวิชาเพิ่มเติมของบ้านป่าเด็งไม่อยู่ในคลัง
+  assert.equal(env.DB.raw.prepare("SELECT COUNT(*) n FROM gr_indicator_bank WHERE subject_code IN ('ว14201','พ14201')").get().n, 0);
+});
+
+test("ย้ายข้อมูลวิชาเพิ่มเติม: แถวที่นำเข้าด้วยรหัสวิชาเลื่อนผิด ถูกแก้เป็นรหัสที่ถูก", async () => {
+  const { makeEnv } = await import("../dev/server.mjs");
+  const { ensureSchema, migrateAdditional2568 } = await import("../src/lib/schema.js");
+  const env = await makeEnv(); await ensureSchema(env);
+  await env.DB.prepare("DELETE FROM system_settings WHERE setting_key = 'wb_additional_2568'").run();
+  await env.DB.prepare("DELETE FROM gr_indicator_bank WHERE subject_code IN ('ส12201','อ15201')").run();
+  const ins = (g, s, t) => env.DB.prepare("INSERT INTO gr_indicator_bank (learning_area, grade_level, code, title, subject_code, kind, created_by) VALUES ('x', ?, 'ข้อ 1', ?, ?, 'ผลการเรียนรู้', 1)").bind(g, t, s).run();
+  await ins("ป.2", "ส12202", "มีความรู้ความเข้าใจเกี่ยวกับความละอายและความไม่ทนต่อการทุจริต"); // ต่อต้านทุจริต ใส่รหัสหน้าที่พลเมือง
+  await ins("ป.5", "อ15205", "นักเรียนเข้าใจบทสนทนาและบทความสั้นๆได้");
+  await ins("ป.5", "อ15205", "ข้อที่โรงเรียนเพิ่มเอง"); // ไม่อยู่ในไฟล์ → ไม่แตะ
+  await migrateAdditional2568(env);
+  const n = (sql) => env.DB.raw.prepare(sql).get().n;
+  assert.equal(n("SELECT COUNT(*) n FROM gr_indicator_bank WHERE subject_code = 'ส12202' AND title LIKE '%ทุจริต%'"), 0);
+  assert.equal(n("SELECT COUNT(*) n FROM gr_indicator_bank WHERE subject_code = 'ส12201'"), 9);
+  assert.equal(n("SELECT COUNT(*) n FROM gr_indicator_bank WHERE subject_code = 'อ15201'"), 8);
+  assert.equal(n("SELECT COUNT(*) n FROM gr_indicator_bank WHERE subject_code = 'อ15205'"), 1);
 });
